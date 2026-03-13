@@ -82,25 +82,25 @@ Flags (override config):
 
 ## Core Components
 
-### 1. Config (internal/config)
+### 1. Config (config)
 
 - Parse and validate YAML on startup
 - Watch config file for changes and hot-reload without restarting
 - Merge CLI flag overrides on top of file config
 
-### 2. Auth (internal/auth)
+### 2. Auth (auth)
 
 - SSH: load private key from path, construct ssh.ClientConfig, pass via GIT_SSH_COMMAND env var to git subprocess
 - HTTPS token: inject into remote URL as https://oauth2:TOKEN@gitlab.com/... or via GIT_ASKPASS
 - Never log or expose credentials
 
-### 3. Mirror (internal/mirror)
+### 3. Mirror (mirror)
 
 - Clone source repo into a temp/cache directory as a bare repo (git clone --bare --mirror)
 - On each sync cycle: git fetch --prune origin on the bare clone, then git push --mirror <remote> to each target
 - Using a bare mirror clone is the cleanest approach — it handles all branches, tags, and deletions automatically without needing to track them manually
 
-### 4. Daemon (internal/daemon)
+### 4. Daemon (daemon)
 
 - Run as a background process, storing a PID file at ~/.local/share/gitgogit/gitgogit.pid
 - Ticker-based polling at the configured interval
@@ -108,7 +108,7 @@ Flags (override config):
 - Retry logic with exponential backoff on failure
 - Graceful shutdown on SIGINT/SIGTERM
 
-### 5. Logging (internal/log)
+### 5. Logging (log)
 
 - Structured JSON logs to file, human-readable to stdout
 - Per-repo context in each log entry (repo name, mirror URL, result)
