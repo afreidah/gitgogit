@@ -1,0 +1,23 @@
+repos:
+  - name: my-project
+    source:
+      url: git@github.com:myorg/my-project.git
+      auth:
+        type: ssh
+        key: ~/.ssh/id_ed25519
+    mirrors:
+      - url: git@codeberg.org:myorg/my-project.git
+        auth:
+          type: ssh
+          key: ~/.ssh/id_ed25519
+      - url: https://gitlab.com/myorg/my-project.git
+        auth:
+          type: token
+          env: GITLAB_TOKEN   # reads token from $GITLAB_TOKEN env var
+
+daemon:
+  interval: 60s          # how often to poll source for changes
+  retry_attempts: 3      # number of retries on failure
+  retry_backoff: 10s     # initial backoff between retries (doubles each attempt)
+  log_level: info        # debug | info | warn | error
+  log_file: ~/.local/share/gitgogit/gitgogit.log

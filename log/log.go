@@ -1,0 +1,95 @@
+package log
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
+)
+
+// multiHandler fans a single Record out to multiple slog.Handlers.
+type multiHandler struct {
+	handlers []slog.Handler
+}
+
+func (m multiHandler) Enabled(ctx context.Context, level slog.Level) bool {
+	for _, h := range m.handlers {
+		if h.Enabled(ctx, level) {
+			return true
+		}
+	}
+	return false
+}
+
+func (m multiHandler) Handle(ctx context.Context, r slog.Record) error {
+	var errs []error
+	for _, h := range m.handlers {
+		if h.Enabled(ctx, r.Level) {
+			errs = append(errs, h.Handle(ctx, r.Clone()))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func (m multiHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	handlers := make([]slog.Handler, len(m.handlers))
+	for i, h := range m.handlers {
+		handlers[i] = h.WithAttrs(attrs)
+	}
+	return multiHandler{handlers: handlers}
+}
+
+func (m multiHandler) WithGroup(name string) slog.Handler {
+	handlers := make([]slog.Handler, len(m.handlers))
+	for i, h := range m.handlers {
+		handlers[i] = h.WithGroup(name)
+	}
+	return multiHandler{handlers: handlers}
+}
+
+// ParseLevel converts a level string to slog.Level.
+func ParseLevel(s string) (slog.Level, error) {
+	switch strings.ToLower(s) {
+	case "debug":
+		return slog.LevelDebug, nil
+	case "info", "":
+		return slog.LevelInfo, nil
+	case "warn", "warning":
+		return slog.LevelWarn, nil
+	case "error":
+		return slog.LevelError, nil
+	default:
+		return slog.LevelInfo, fmt.Errorf("unknown log level %q", s)
+	}
+}
+
+// Setup initialises a slog.Logger that fans out to:
+//   - a text handler writing to os.Stdout
+//   - a JSON handler writing to logFilePath (appended), if non-empty
+func Setup(levelStr, logFilePath string) (*slog.Logger, error) {
+	level, err := ParseLevel(levelStr)
+	if err != nil {
+		return nil, err
+	}
+
+	opts := &slog.HandlerOptions{Level: level}
+	stdoutHandler := slog.NewTextHandler(os.Stdout, opts)
+
+	if logFilePath == "" {
+		return slog.New(stdoutHandler), nil
+	}
+
+	if err := os.MkdirAll(filepath.Dir(logFilePath), 0o750); err != nil {
+		return nil, fmt.Errorf("create log dir: %w", err)
+	}
+	f, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o640)
+	if err != nil {
+		return nil, fmt.Errorf("open log file: %w", err)
+	}
+	fileHandler := slog.NewJSONHandler(f, opts)
+
+	return slog.New(multiHandler{handlers: []slog.Handler{stdoutHandler, fileHandler}}), nil
+}

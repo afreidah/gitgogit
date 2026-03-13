@@ -1,0 +1,257 @@
+package config
+
+import (
+	"context"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"gopkg.in/yaml.v3"
+)
+
+// Duration wraps time.Duration to support YAML unmarshaling of strings like "60s".
+type Duration struct{ time.Duration }
+
+func (d *Duration) UnmarshalYAML(value *yaml.Node) error {
+	dur, err := time.ParseDuration(value.Value)
+	if err != nil {
+		return fmt.Errorf("invalid duration %q: %w", value.Value, err)
+	}
+	d.Duration = dur
+	return nil
+}
+
+// AuthConfig holds credentials for a single endpoint.
+type AuthConfig struct {
+	Type string `yaml:"type"` // "ssh", "token", or "" (no auth)
+	Key  string `yaml:"key"`  // SSH private key path (type=ssh)
+	Env  string `yaml:"env"`  // env var holding the token (type=token)
+}
+
+// SourceConfig describes the upstream repository.
+type SourceConfig struct {
+	URL  string     `yaml:"url"`
+	Auth AuthConfig `yaml:"auth"`
+}
+
+// MirrorTarget is one push destination.
+type MirrorTarget struct {
+	URL  string     `yaml:"url"`
+	Auth AuthConfig `yaml:"auth"`
+}
+
+// RepoConfig is one full mirroring job.
+type RepoConfig struct {
+	Name    string         `yaml:"name"`
+	Source  SourceConfig   `yaml:"source"`
+	Mirrors []MirrorTarget `yaml:"mirrors"`
+}
+
+// DaemonConfig holds daemon-wide settings.
+type DaemonConfig struct {
+	Interval      Duration `yaml:"interval"`
+	RetryAttempts int      `yaml:"retry_attempts"`
+	RetryBackoff  Duration `yaml:"retry_backoff"`
+	LogLevel      string   `yaml:"log_level"`
+	LogFile       string   `yaml:"log_file"`
+}
+
+// Config is the root configuration document.
+type Config struct {
+	Repos  []RepoConfig `yaml:"repos"`
+	Daemon DaemonConfig `yaml:"daemon"`
+}
+
+// CLIOverrides holds flag values that supersede the file config.
+type CLIOverrides struct {
+	ConfigPath string
+	Interval   string
+	LogLevel   string
+	Repo       string
+}
+
+// DefaultPath returns the default config file location.
+func DefaultPath() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".config", "gitgogit", "config.yaml")
+}
+
+// DefaultPIDPath returns the default PID file location.
+func DefaultPIDPath() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".local", "share", "gitgogit", "gitgogit.pid")
+}
+
+// DefaultLogPath returns the default log file location.
+func DefaultLogPath() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".local", "share", "gitgogit", "gitgogit.log")
+}
+
+// ExpandPath replaces a leading ~ with the user home directory.
+func ExpandPath(p string) (string, error) {
+	if !strings.HasPrefix(p, "~") {
+		return p, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("get home dir: %w", err)
+	}
+	return filepath.Join(home, p[1:]), nil
+}
+
+// Load reads, parses, expands paths, and applies defaults for the config at path.
+func Load(path string) (*Config, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read config: %w", err)
+	}
+
+	var cfg Config
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return nil, fmt.Errorf("parse config: %w", err)
+	}
+
+	// Expand ~ in all path fields.
+	for i := range cfg.Repos {
+		if cfg.Repos[i].Source.Auth.Key != "" {
+			expanded, err := ExpandPath(cfg.Repos[i].Source.Auth.Key)
+			if err != nil {
+				return nil, fmt.Errorf("repo %q source key: %w", cfg.Repos[i].Name, err)
+			}
+			cfg.Repos[i].Source.Auth.Key = expanded
+		}
+		for j := range cfg.Repos[i].Mirrors {
+			if cfg.Repos[i].Mirrors[j].Auth.Key != "" {
+				expanded, err := ExpandPath(cfg.Repos[i].Mirrors[j].Auth.Key)
+				if err != nil {
+					return nil, fmt.Errorf("repo %q mirror key: %w", cfg.Repos[i].Name, err)
+				}
+				cfg.Repos[i].Mirrors[j].Auth.Key = expanded
+			}
+		}
+	}
+	if cfg.Daemon.LogFile != "" {
+		expanded, err := ExpandPath(cfg.Daemon.LogFile)
+		if err != nil {
+			return nil, fmt.Errorf("log_file: %w", err)
+		}
+		cfg.Daemon.LogFile = expanded
+	}
+
+	// Apply defaults.
+	if cfg.Daemon.Interval.Duration == 0 {
+		cfg.Daemon.Interval.Duration = 60 * time.Second
+	}
+	if cfg.Daemon.RetryAttempts == 0 {
+		cfg.Daemon.RetryAttempts = 3
+	}
+	if cfg.Daemon.RetryBackoff.Duration == 0 {
+		cfg.Daemon.RetryBackoff.Duration = 10 * time.Second
+	}
+	if cfg.Daemon.LogLevel == "" {
+		cfg.Daemon.LogLevel = "info"
+	}
+
+	return &cfg, nil
+}
+
+// Merge applies non-zero CLIOverrides onto the config in place.
+func (c *Config) Merge(o CLIOverrides) error {
+	if o.Interval != "" {
+		dur, err := time.ParseDuration(o.Interval)
+		if err != nil {
+			return fmt.Errorf("invalid --interval %q: %w", o.Interval, err)
+		}
+		c.Daemon.Interval.Duration = dur
+	}
+	if o.LogLevel != "" {
+		c.Daemon.LogLevel = o.LogLevel
+	}
+	return nil
+}
+
+// Validate checks required fields and internal consistency.
+func (c *Config) Validate() error {
+	names := make(map[string]bool)
+	for _, r := range c.Repos {
+		if r.Name == "" {
+			return fmt.Errorf("a repo is missing a name")
+		}
+		if names[r.Name] {
+			return fmt.Errorf("duplicate repo name %q", r.Name)
+		}
+		names[r.Name] = true
+		if r.Source.URL == "" {
+			return fmt.Errorf("repo %q: source URL is required", r.Name)
+		}
+		if err := validateAuth(r.Name, "source", r.Source.Auth); err != nil {
+			return err
+		}
+		if len(r.Mirrors) == 0 {
+			return fmt.Errorf("repo %q: at least one mirror is required", r.Name)
+		}
+		for _, m := range r.Mirrors {
+			if m.URL == "" {
+				return fmt.Errorf("repo %q: a mirror is missing a URL", r.Name)
+			}
+			if err := validateAuth(r.Name, "mirror "+m.URL, m.Auth); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func validateAuth(repo, context string, a AuthConfig) error {
+	switch a.Type {
+	case "ssh":
+		if a.Key == "" {
+			return fmt.Errorf("repo %q %s: ssh auth requires key", repo, context)
+		}
+	case "token":
+		if a.Env == "" {
+			return fmt.Errorf("repo %q %s: token auth requires env", repo, context)
+		}
+	case "":
+		// no auth required
+	default:
+		return fmt.Errorf("repo %q %s: unknown auth type %q", repo, context, a.Type)
+	}
+	return nil
+}
+
+// Poll blocks until the config file's mtime changes relative to lastMod,
+// checking every checkInterval. Returns the new mtime or a context error.
+func Poll(ctx context.Context, path string, lastMod time.Time, checkInterval time.Duration) (time.Time, error) {
+	ticker := time.NewTicker(checkInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return time.Time{}, ctx.Err()
+		case <-ticker.C:
+			info, err := os.Stat(path)
+			if err != nil {
+				continue
+			}
+			if info.ModTime().After(lastMod) {
+				return info.ModTime(), nil
+			}
+		}
+	}
+}
+
+// Save writes the config back to path in YAML format.
+func Save(path string, cfg *Config) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		return fmt.Errorf("create config dir: %w", err)
+	}
+	data, err := yaml.Marshal(cfg)
+	if err != nil {
+		return fmt.Errorf("marshal config: %w", err)
+	}
+	return os.WriteFile(path, data, 0o640)
+}
