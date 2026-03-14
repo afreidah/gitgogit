@@ -10,6 +10,13 @@ import (
 	"strings"
 )
 
+const (
+	// dirPerm grants rwx to owner, r-x to group, nothing to others.
+	dirPerm os.FileMode = 0o750
+	// filePerm grants rw- to owner, r-- to group, nothing to others.
+	filePerm os.FileMode = 0o640
+)
+
 // multiHandler fans a single Record out to multiple slog.Handlers.
 type multiHandler struct {
 	handlers []slog.Handler
@@ -82,10 +89,10 @@ func Setup(levelStr, logFilePath string) (*slog.Logger, error) {
 		return slog.New(stdoutHandler), nil
 	}
 
-	if err := os.MkdirAll(filepath.Dir(logFilePath), 0o750); err != nil {
+	if err := os.MkdirAll(filepath.Dir(logFilePath), dirPerm); err != nil {
 		return nil, fmt.Errorf("create log dir: %w", err)
 	}
-	f, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o640)
+	f, err := os.OpenFile(logFilePath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, filePerm)
 	if err != nil {
 		return nil, fmt.Errorf("open log file: %w", err)
 	}

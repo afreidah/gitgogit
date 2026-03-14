@@ -220,6 +220,22 @@ func TestValidate_SSHMissingKey(t *testing.T) {
 	}
 }
 
+func TestValidate_DuplicateMirrorURL(t *testing.T) {
+	mirror := MirrorTarget{URL: "git@codeberg.org:org/repo.git"}
+	cfg := &Config{
+		Repos: []RepoConfig{
+			{
+				Name:    "repo",
+				Source:  SourceConfig{URL: "git@github.com:org/repo.git"},
+				Mirrors: []MirrorTarget{mirror, mirror},
+			},
+		},
+	}
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for duplicate mirror URL")
+	}
+}
+
 func TestValidate_TokenMissingEnv(t *testing.T) {
 	cfg := &Config{
 		Repos: []RepoConfig{

@@ -193,10 +193,15 @@ func (c *Config) Validate() error {
 		if len(r.Mirrors) == 0 {
 			return fmt.Errorf("repo %q: at least one mirror is required", r.Name)
 		}
+		mirrorURLs := make(map[string]bool)
 		for _, m := range r.Mirrors {
 			if m.URL == "" {
 				return fmt.Errorf("repo %q: a mirror is missing a URL", r.Name)
 			}
+			if mirrorURLs[m.URL] {
+				return fmt.Errorf("repo %q: duplicate mirror URL %q", r.Name, m.URL)
+			}
+			mirrorURLs[m.URL] = true
 			if err := validateAuth(r.Name, "mirror "+m.URL, m.Auth); err != nil {
 				return err
 			}
