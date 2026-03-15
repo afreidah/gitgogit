@@ -4,12 +4,15 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"sync"
 	"time"
 
 	"gitgogit/config"
 	"gitgogit/mirror"
 )
+
+const hotReloadInterval = 5 * time.Second
 
 // withRetry calls fn up to attempts times with exponential backoff.
 // Backoff sequence: base, 2*base, 4*base, … capped at 5 minutes.
@@ -52,6 +55,7 @@ type syncer interface {
 // Daemon holds process-wide configuration and orchestrates repo syncing.
 type Daemon struct {
 	cfg       *config.Config
+	mu        sync.RWMutex // guards cfg
 	logger    *slog.Logger
 	wg        sync.WaitGroup
 	newRunner func(config.RepoConfig, *slog.Logger) syncer // nil → mirror.NewRunner
@@ -66,7 +70,12 @@ func (d *Daemon) SyncRepo(ctx context.Context, repo config.RepoConfig) []mirror.
 	runner := d.makeRunner(repo)
 	var results []mirror.SyncResult
 
-	withRetry(ctx, d.cfg.Daemon.RetryAttempts, d.cfg.Daemon.RetryBackoff.Duration, func() error {
+	d.mu.RLock()
+	attempts := d.cfg.Daemon.RetryAttempts
+	backoff := d.cfg.Daemon.RetryBackoff.Duration
+	d.mu.RUnlock()
+
+	withRetry(ctx, attempts, backoff, func() error {
 		results = runner.Sync(ctx)
 		for _, r := range results {
 			if r.Err != nil {
@@ -79,11 +88,38 @@ func (d *Daemon) SyncRepo(ctx context.Context, repo config.RepoConfig) []mirror.
 	return results
 }
 
-// Run starts the polling loop. It syncs all repos immediately, then ticks at the configured interval. Blocks until ctx is cancelled, then waits for all in-flight syncs to complete before returning.
-func (d *Daemon) Run(ctx context.Context) {
+// Run starts the polling loop. It syncs all repos immediately, then ticks at the configured interval.
+// If configPath is non-empty, a goroutine watches the file for changes and hot-reloads on modification.
+// Blocks until ctx is cancelled, then waits for all in-flight syncs to complete before returning.
+func (d *Daemon) Run(ctx context.Context, configPath string) {
+	if configPath != "" {
+		var lastMod time.Time
+		if info, err := os.Stat(configPath); err == nil {
+			lastMod = info.ModTime()
+		}
+		go func() {
+			for {
+				newMod, err := config.Poll(ctx, configPath, lastMod, hotReloadInterval)
+				if err != nil {
+					return // ctx cancelled
+				}
+				lastMod = newMod
+				if err := d.reloadConfig(configPath); err != nil {
+					d.logger.Warn("config reload failed", slog.String("err", err.Error()))
+				} else {
+					d.logger.Info("config reloaded", slog.String("path", configPath))
+				}
+			}
+		}()
+	}
+
+	d.mu.RLock()
+	interval := d.cfg.Daemon.Interval.Duration
+	d.mu.RUnlock()
+
 	d.runOnce(ctx)
 
-	ticker := time.NewTicker(d.cfg.Daemon.Interval.Duration)
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	for {
@@ -92,9 +128,25 @@ func (d *Daemon) Run(ctx context.Context) {
 			d.wg.Wait()
 			return
 		case <-ticker.C:
+			d.mu.RLock()
+			interval = d.cfg.Daemon.Interval.Duration
+			d.mu.RUnlock()
+			ticker.Reset(interval)
 			d.runOnce(ctx)
 		}
 	}
+}
+
+// reloadConfig loads the config from path and swaps it in under the write lock.
+func (d *Daemon) reloadConfig(path string) error {
+	newCfg, err := config.Load(path)
+	if err != nil {
+		return err
+	}
+	d.mu.Lock()
+	d.cfg = newCfg
+	d.mu.Unlock()
+	return nil
 }
 
 // makeRunner returns a syncer for repo, using the test-injectable factory if set.
@@ -107,7 +159,12 @@ func (d *Daemon) makeRunner(repo config.RepoConfig) syncer {
 
 // runOnce syncs every configured repo, each in its own goroutine.
 func (d *Daemon) runOnce(ctx context.Context) {
-	for _, repo := range d.cfg.Repos {
+	d.mu.RLock()
+	repos := make([]config.RepoConfig, len(d.cfg.Repos))
+	copy(repos, d.cfg.Repos)
+	d.mu.RUnlock()
+
+	for _, repo := range repos {
 		repo := repo
 		d.wg.Add(1)
 		go func() {

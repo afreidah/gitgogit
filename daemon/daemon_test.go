@@ -160,7 +160,7 @@ func TestDaemon_Run_StopsOnContextCancel(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
-		d.Run(ctx)
+		d.Run(ctx, "")
 		close(done)
 	}()
 
@@ -193,7 +193,7 @@ func TestDaemon_Run_CallsRunOnce(t *testing.T) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	go d.Run(ctx)
+	go d.Run(ctx, "")
 
 	// Wait for at least 2 sync calls (initial + first tick).
 	deadline := time.Now().Add(2 * time.Second)
@@ -231,7 +231,7 @@ func TestDaemon_Run_GracefulShutdown(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	runDone := make(chan struct{})
 	go func() {
-		d.Run(ctx)
+		d.Run(ctx, "")
 		close(runDone)
 	}()
 

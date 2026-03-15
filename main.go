@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"flag"
 	"fmt"
@@ -9,7 +10,9 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"strings"
 	"syscall"
+	"text/tabwriter"
 	"time"
 
 	"gitgogit/config"
@@ -42,6 +45,10 @@ func main() {
 		runStop(args)
 	case "status":
 		runStatus(args)
+	case "list":
+		runList(args)
+	case "add":
+		runAdd(args)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command %q\n\n", cmd)
 		printUsage()
@@ -60,6 +67,8 @@ Commands:
   stop    Stop the running daemon
   status  Show daemon status
   sync    Perform a one-shot mirror sync and exit
+  list    List configured repos
+  add     Interactively add a repo to the config
 
 Flags:
   --config      Path to config file (default: ~/.config/gitgogit/config.yaml)
@@ -138,7 +147,7 @@ func runDaemonChild(args []string) {
 	defer stop()
 
 	logger.Info("daemon started", slog.Int("pid", os.Getpid()), slog.String("config", *configPath))
-	daemon.New(cfg, logger).Run(ctx)
+	daemon.New(cfg, logger).Run(ctx, *configPath)
 	logger.Info("daemon stopped")
 }
 
@@ -237,6 +246,113 @@ func runSync(args []string) {
 	}
 
 	os.Exit(exitCode)
+}
+
+func runList(args []string) {
+	fs := flag.NewFlagSet("list", flag.ExitOnError)
+	configPath := fs.String("config", config.DefaultConfigPath(), "path to config file")
+	fs.Parse(args)
+
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if len(cfg.Repos) == 0 {
+		fmt.Println("no repos configured")
+		return
+	}
+
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(w, "NAME\tSOURCE\tMIRRORS")
+	for _, r := range cfg.Repos {
+		mirrorURLs := make([]string, len(r.Mirrors))
+		for i, m := range r.Mirrors {
+			mirrorURLs[i] = m.URL
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\n", r.Name, r.Source.URL, strings.Join(mirrorURLs, ", "))
+	}
+	w.Flush()
+}
+
+func runAdd(args []string) {
+	fs := flag.NewFlagSet("add", flag.ExitOnError)
+	configPath := fs.String("config", config.DefaultConfigPath(), "path to config file")
+	fs.Parse(args)
+
+	// Load existing config if present; otherwise start with an empty one.
+	cfg, err := config.Load(*configPath)
+	if err != nil {
+		cfg = &config.Config{}
+	}
+
+	reader := bufio.NewReader(os.Stdin)
+
+	prompt := func(label string) string {
+		fmt.Printf("%s: ", label)
+		line, _ := reader.ReadString('\n')
+		return strings.TrimSpace(line)
+	}
+
+	name := prompt("Repo name")
+	if name == "" {
+		fmt.Fprintln(os.Stderr, "error: name is required")
+		os.Exit(1)
+	}
+	sourceURL := prompt("Source URL")
+	if sourceURL == "" {
+		fmt.Fprintln(os.Stderr, "error: source URL is required")
+		os.Exit(1)
+	}
+	sourceAuth := promptAuth(reader, "source")
+
+	var mirrors []config.MirrorTarget
+	for {
+		mirrorURL := prompt("Mirror URL (leave blank to finish)")
+		if mirrorURL == "" {
+			break
+		}
+		mirrorAuth := promptAuth(reader, "mirror")
+		mirrors = append(mirrors, config.MirrorTarget{URL: mirrorURL, Auth: mirrorAuth})
+	}
+	if len(mirrors) == 0 {
+		fmt.Fprintln(os.Stderr, "error: at least one mirror is required")
+		os.Exit(1)
+	}
+
+	cfg.Repos = append(cfg.Repos, config.RepoConfig{
+		Name:    name,
+		Source:  config.SourceConfig{URL: sourceURL, Auth: sourceAuth},
+		Mirrors: mirrors,
+	})
+
+	if err := config.Save(*configPath, cfg); err != nil {
+		fmt.Fprintf(os.Stderr, "error saving config: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Printf("added repo %q to %s\n", name, *configPath)
+}
+
+// promptAuth interactively asks for auth details and returns a config.AuthConfig.
+func promptAuth(reader *bufio.Reader, context string) config.AuthConfig {
+	prompt := func(label string) string {
+		fmt.Printf("%s: ", label)
+		line, _ := reader.ReadString('\n')
+		return strings.TrimSpace(line)
+	}
+
+	authType := prompt(fmt.Sprintf("%s auth type (ssh/token, leave blank for none)", context))
+	switch authType {
+	case "ssh":
+		key := prompt("SSH key path")
+		return config.AuthConfig{Type: "ssh", Key: key}
+	case "token":
+		env := prompt("Token env var name")
+		return config.AuthConfig{Type: "token", Env: env}
+	default:
+		return config.AuthConfig{}
+	}
 }
 
 // loadConfig loads the config file and merges CLI overrides.
