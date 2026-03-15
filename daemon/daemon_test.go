@@ -3,8 +3,14 @@ package daemon
 import (
 	"context"
 	"errors"
+	"io"
+	"log/slog"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"gitgogit/config"
+	"gitgogit/mirror"
 )
 
 var errTest = errors.New("test error")
@@ -128,4 +134,150 @@ func TestWithRetry_ContextCancelledDuringSleep(t *testing.T) {
 	if calls != 1 {
 		t.Errorf("expected 1 call before cancel, got %d", calls)
 	}
+}
+
+// minimalConfig returns a *config.Config suitable for daemon unit tests.
+// The repos slice is empty by default; callers can append to it.
+func minimalConfig(interval time.Duration) *config.Config {
+	return &config.Config{
+		Daemon: config.DaemonConfig{
+			Interval:      config.Duration{Duration: interval},
+			RetryAttempts: 1,
+			RetryBackoff:  config.Duration{Duration: time.Millisecond},
+			LogLevel:      "info",
+		},
+	}
+}
+
+func silentLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
+func TestDaemon_Run_StopsOnContextCancel(t *testing.T) {
+	cfg := minimalConfig(10 * time.Millisecond)
+	d := New(cfg, silentLogger())
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		d.Run(ctx)
+		close(done)
+	}()
+
+	cancel()
+
+	select {
+	case <-done:
+		// Run returned as expected.
+	case <-time.After(2 * time.Second):
+		t.Error("Run did not return after context cancel")
+	}
+}
+
+func TestDaemon_Run_CallsRunOnce(t *testing.T) {
+	var syncCount atomic.Int32
+
+	cfg := minimalConfig(10 * time.Millisecond)
+	cfg.Repos = []config.RepoConfig{
+		{
+			Name:    "test",
+			Source:  config.SourceConfig{URL: "/nonexistent"},
+			Mirrors: []config.MirrorTarget{{URL: "/nonexistent-mirror"}},
+		},
+	}
+
+	d := New(cfg, silentLogger())
+	// Override the runner so we can count calls without hitting git.
+	d.newRunner = func(repo config.RepoConfig, logger *slog.Logger) syncer {
+		return &fakeSyncer{count: &syncCount}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	go d.Run(ctx)
+
+	// Wait for at least 2 sync calls (initial + first tick).
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if syncCount.Load() >= 2 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	cancel()
+
+	if syncCount.Load() < 2 {
+		t.Errorf("expected at least 2 sync calls, got %d", syncCount.Load())
+	}
+}
+
+func TestDaemon_Run_GracefulShutdown(t *testing.T) {
+	started := make(chan struct{})
+	finished := make(chan struct{})
+
+	cfg := minimalConfig(time.Hour) // long interval so only the initial runOnce fires
+	cfg.Repos = []config.RepoConfig{
+		{
+			Name:    "slow",
+			Source:  config.SourceConfig{URL: "/nonexistent"},
+			Mirrors: []config.MirrorTarget{{URL: "/nonexistent-mirror"}},
+		},
+	}
+
+	d := New(cfg, silentLogger())
+	d.newRunner = func(repo config.RepoConfig, logger *slog.Logger) syncer {
+		return &blockingSyncer{started: started, finished: finished}
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	runDone := make(chan struct{})
+	go func() {
+		d.Run(ctx)
+		close(runDone)
+	}()
+
+	// Wait for the goroutine to start its sync, then cancel.
+	<-started
+	cancel()
+
+	// Run should not return until the in-flight sync completes.
+	select {
+	case <-runDone:
+		t.Error("Run returned before in-flight sync finished")
+	case <-time.After(50 * time.Millisecond):
+		// Good — Run is still waiting.
+	}
+
+	// Unblock the syncer and verify Run now returns.
+	close(finished)
+	select {
+	case <-runDone:
+		// Run returned after sync completed.
+	case <-time.After(2 * time.Second):
+		t.Error("Run did not return after in-flight sync completed")
+	}
+}
+
+// fakeSyncer counts how many times Sync is called.
+type fakeSyncer struct {
+	count *atomic.Int32
+}
+
+func (f *fakeSyncer) Sync(_ context.Context) []mirror.SyncResult {
+	f.count.Add(1)
+	return nil
+}
+
+// blockingSyncer signals started, then blocks until finished is closed.
+type blockingSyncer struct {
+	started  chan struct{}
+	finished chan struct{}
+}
+
+func (b *blockingSyncer) Sync(_ context.Context) []mirror.SyncResult {
+	select {
+	case b.started <- struct{}{}:
+	default:
+	}
+	<-b.finished
+	return nil
 }
