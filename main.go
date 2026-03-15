@@ -8,8 +8,8 @@ import (
 	"os"
 
 	"gitgogit/config"
+	"gitgogit/daemon"
 	glog "gitgogit/log"
-	"gitgogit/mirror"
 )
 
 func main() {
@@ -79,8 +79,7 @@ func runSync(args []string) {
 		if *repo != "" && r.Name != *repo {
 			continue
 		}
-		runner := mirror.NewRunner(r, logger)
-		results := runner.Sync(ctx)
+		results := daemon.SyncRepo(ctx, r, logger, cfg.Daemon.RetryAttempts, cfg.Daemon.RetryBackoff.Duration)
 		for _, res := range results {
 			if res.Err != nil {
 				logger.Error("sync failed",
