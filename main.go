@@ -74,12 +74,13 @@ func runSync(args []string) {
 
 	ctx := context.Background()
 	exitCode := 0
+	d := daemon.New(cfg.Daemon, logger)
 
 	for _, r := range cfg.Repos {
 		if *repo != "" && r.Name != *repo {
 			continue
 		}
-		results := daemon.SyncRepo(ctx, r, logger, cfg.Daemon.RetryAttempts, cfg.Daemon.RetryBackoff.Duration)
+		results := d.SyncRepo(ctx, r)
 		for _, res := range results {
 			if res.Err != nil {
 				logger.Error("sync failed",

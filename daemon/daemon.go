@@ -43,13 +43,24 @@ func withRetry(ctx context.Context, attempts int, base time.Duration, fn func() 
 	return fmt.Errorf("failed after %d attempt(s): %w", attempts, err)
 }
 
+// Daemon holds process-wide configuration and orchestrates repo syncing.
+type Daemon struct {
+	cfg    config.DaemonConfig
+	logger *slog.Logger
+}
+
+// New creates a Daemon from the daemon section of the config.
+func New(cfg config.DaemonConfig, logger *slog.Logger) *Daemon {
+	return &Daemon{cfg: cfg, logger: logger}
+}
+
 // SyncRepo mirrors one repo with retry. It constructs a Runner, calls Sync
 // inside withRetry, and returns the results from the final attempt.
-func SyncRepo(ctx context.Context, repo config.RepoConfig, logger *slog.Logger, attempts int, backoff time.Duration) []mirror.SyncResult {
-	runner := mirror.NewRunner(repo, logger)
+func (d *Daemon) SyncRepo(ctx context.Context, repo config.RepoConfig) []mirror.SyncResult {
+	runner := mirror.NewRunner(repo, d.logger)
 	var results []mirror.SyncResult
 
-	withRetry(ctx, attempts, backoff, func() error {
+	withRetry(ctx, d.cfg.RetryAttempts, d.cfg.RetryBackoff.Duration, func() error {
 		results = runner.Sync(ctx)
 		for _, r := range results {
 			if r.Err != nil {
