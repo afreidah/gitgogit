@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -284,6 +285,17 @@ func runAdd(args []string) {
 	// Load existing config if present; otherwise start with an empty one.
 	cfg, err := config.Load(*configPath)
 	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			fmt.Fprintf(os.Stderr, "warning: could not load config: %v\n", err)
+			fmt.Fprint(os.Stderr, "proceed with an empty config? [y/N] ")
+			line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
+			if strings.TrimSpace(strings.ToLower(line)) != "y" {
+				os.Exit(1)
+			}
+		}
+		fmt.Fprintf(os.Stderr, "warning: problem loading config: %v\n", err)
+
+		fmt.Fprintf(os.Stderr, "proceeding with creating new empty config file at: %s\n", *configPath)
 		cfg = &config.Config{}
 	}
 

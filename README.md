@@ -2,13 +2,37 @@
 
 A lightweight Git repository mirroring daemon. It watches one or more source repositories and pushes every change to one or more mirror remotes.
 
-## Build
-
-```sh
-go build -o gitgogit .
-```
+## Build & install
 
 Requires Go 1.21 or later. The only external dependency is `gopkg.in/yaml.v3`.
+
+**User install** — builds and places the binary in `$(go env GOPATH)/bin` (typically `~/go/bin`). No `sudo` required; just ensure `~/go/bin` is on your `$PATH`.
+
+```sh
+make install
+# equivalent: go install .
+```
+
+**System-wide install** — copies the binary to `/usr/local/bin` so every user on the machine can run it.
+
+```sh
+sudo make system-install
+# or with a custom prefix:
+sudo make system-install PREFIX=/opt/homebrew
+```
+
+**Build only** — produces a `./gitgogit` binary in the current directory without installing it.
+
+```sh
+make build
+# equivalent: go build -o gitgogit .
+```
+
+**Uninstall** (system-wide install only):
+
+```sh
+sudo make system-uninstall
+```
 
 ## Config file
 
