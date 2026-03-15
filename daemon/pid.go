@@ -8,23 +8,20 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
-)
 
-const (
-	pidDirPerm  os.FileMode = 0o750
-	pidFilePerm os.FileMode = 0o640
+	"gitgogit/config"
 )
 
 // WritePID atomically writes the current process PID to path.
 // It creates parent directories as needed, writes to a temp file in the same
 // directory, then renames it into place so readers never see a partial write.
 func WritePID(path string) error {
-	if err := os.MkdirAll(filepath.Dir(path), pidDirPerm); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), config.DirPerm); err != nil {
 		return fmt.Errorf("create pid dir: %w", err)
 	}
 	tmp := path + ".tmp"
 	content := fmt.Sprintf("%d\n", os.Getpid())
-	if err := os.WriteFile(tmp, []byte(content), pidFilePerm); err != nil {
+	if err := os.WriteFile(tmp, []byte(content), config.FilePerm); err != nil {
 		return fmt.Errorf("write pid: %w", err)
 	}
 	if err := os.Rename(tmp, path); err != nil {

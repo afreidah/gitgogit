@@ -11,6 +11,13 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const (
+	// DirPerm grants rwx to owner, r-x to group, nothing to others.
+	DirPerm os.FileMode = 0o750
+	// FilePerm grants rw- to owner, r-- to group, nothing to others.
+	FilePerm os.FileMode = 0o640
+)
+
 // Duration wraps time.Duration to support YAML unmarshaling of strings like "60s".
 type Duration struct{ time.Duration }
 

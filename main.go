@@ -4,11 +4,11 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 	"time"
 
@@ -91,15 +91,6 @@ func runStart(args []string) {
 	if logPath == "" {
 		logPath = config.DefaultLogPath()
 	}
-	if err := os.MkdirAll(filepath.Dir(logPath), 0o750); err != nil {
-		fmt.Fprintf(os.Stderr, "create log dir: %v\n", err)
-		os.Exit(1)
-	}
-	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o640)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "open log file: %v\n", err)
-		os.Exit(1)
-	}
 
 	exe, err := os.Executable()
 	if err != nil {
@@ -108,8 +99,6 @@ func runStart(args []string) {
 	}
 
 	cmd := exec.Command(exe, "--daemon-child", "--config", *configPath)
-	cmd.Stdout = logFile
-	cmd.Stderr = logFile
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 
 	if err := cmd.Start(); err != nil {
@@ -132,7 +121,7 @@ func runDaemonChild(args []string) {
 		os.Exit(1)
 	}
 
-	logger, err := glog.Setup(cfg.Daemon.LogLevel, cfg.Daemon.LogFile)
+	logger, err := glog.Setup(cfg.Daemon.LogLevel, cfg.Daemon.LogFile, io.Discard)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "log setup: %v\n", err)
 		os.Exit(1)
@@ -215,7 +204,7 @@ func runSync(args []string) {
 		os.Exit(1)
 	}
 
-	logger, err := glog.Setup(cfg.Daemon.LogLevel, cfg.Daemon.LogFile)
+	logger, err := glog.Setup(cfg.Daemon.LogLevel, cfg.Daemon.LogFile, os.Stdout)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "log setup: %v\n", err)
 		os.Exit(1)

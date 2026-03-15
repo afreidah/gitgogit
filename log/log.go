@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -73,20 +74,24 @@ func ParseLevel(s string) (slog.Level, error) {
 	}
 }
 
-// Setup initialises a slog.Logger that fans out to:
-//   - a text handler writing to os.Stdout
-//   - a JSON handler writing to logFilePath (appended), if non-empty
-func Setup(levelStr, logFilePath string) (*slog.Logger, error) {
+// Setup initialises a slog.Logger. `out` controls the text handler destination:
+//   - pass os.Stdout for interactive commands (sync)
+//   - pass io.Discard for daemon mode (logging goes to the JSON file only)
+//
+// If logFilePath is non-empty a JSON handler is also added, writing to that
+// file (created/appended). If out is io.Discard and logFilePath is empty the
+// logger silently discards all output.
+func Setup(levelStr, logFilePath string, out io.Writer) (*slog.Logger, error) {
 	level, err := ParseLevel(levelStr)
 	if err != nil {
 		return nil, err
 	}
 
 	opts := &slog.HandlerOptions{Level: level}
-	stdoutHandler := slog.NewTextHandler(os.Stdout, opts)
+	textHandler := slog.NewTextHandler(out, opts)
 
 	if logFilePath == "" {
-		return slog.New(stdoutHandler), nil
+		return slog.New(textHandler), nil
 	}
 
 	if err := os.MkdirAll(filepath.Dir(logFilePath), dirPerm); err != nil {
@@ -98,5 +103,5 @@ func Setup(levelStr, logFilePath string) (*slog.Logger, error) {
 	}
 	fileHandler := slog.NewJSONHandler(f, opts)
 
-	return slog.New(multiHandler{handlers: []slog.Handler{stdoutHandler, fileHandler}}), nil
+	return slog.New(multiHandler{handlers: []slog.Handler{textHandler, fileHandler}}), nil
 }
