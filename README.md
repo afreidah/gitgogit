@@ -6,7 +6,7 @@ A lightweight Git repository mirroring daemon. It watches one or more source rep
 
 ## Build & install
 
-Requires Go 1.24 or later. The only external dependency is `gopkg.in/yaml.v3`.
+Requires Go 1.26 or later. The only external dependency is `gopkg.in/yaml.v3`.
 
 **User install** — builds and places the binary in `$(go env GOPATH)/bin` (typically `~/go/bin`). No `sudo` required; just ensure `~/go/bin` is on your `$PATH`.
 

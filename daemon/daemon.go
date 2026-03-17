@@ -60,7 +60,7 @@ type Daemon struct {
 	mu        sync.RWMutex // guards cfg
 	logger    *slog.Logger
 	wg        sync.WaitGroup
-	Status    *status.Store                                          // nil when web UI is disabled
+	Status    *status.Store                                         // nil when web UI is disabled
 	newRunner func(config.RepoConfig, *slog.Logger) (syncer, error) // nil → mirror.NewRunner
 }
 
@@ -143,9 +143,7 @@ func (d *Daemon) TriggerSync(ctx context.Context, repoName string) error {
 	}
 
 	d.Status.MarkSyncing(repoName)
-	d.wg.Add(1)
-	go func() {
-		defer d.wg.Done()
+	d.wg.Go(func() {
 		defer unlock()
 		results := d.SyncRepo(ctx, repo)
 		d.Status.Record(repo.Name, results)
@@ -163,7 +161,7 @@ func (d *Daemon) TriggerSync(ctx context.Context, repoName string) error {
 				)
 			}
 		}
-	}()
+	})
 
 	return nil
 }
@@ -268,9 +266,7 @@ func (d *Daemon) runOnce(ctx context.Context) {
 
 	sem := make(chan struct{}, maxConcurrentSyncs)
 	for _, repo := range repos {
-		d.wg.Add(1)
-		go func() {
-			defer d.wg.Done()
+		d.wg.Go(func() {
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			results := d.SyncRepo(ctx, repo)
@@ -291,6 +287,6 @@ func (d *Daemon) runOnce(ctx context.Context) {
 					)
 				}
 			}
-		}()
+		})
 	}
 }
