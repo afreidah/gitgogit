@@ -42,7 +42,7 @@ func TestSetup_NoLogFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Setup() error: %v", err)
 	}
-	defer closeLog()
+	defer func() { _ = closeLog() }()
 	if logger == nil {
 		t.Fatal("Setup() returned nil logger")
 	}
@@ -56,7 +56,7 @@ func TestSetup_WithLogFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Setup() error: %v", err)
 	}
-	defer closeLog()
+	defer func() { _ = closeLog() }()
 	if logger == nil {
 		t.Fatal("Setup() returned nil logger")
 	}
@@ -80,7 +80,7 @@ func TestMultiHandler_DeliversToBoth(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Setup() error: %v", err)
 	}
-	defer closeLog()
+	defer func() { _ = closeLog() }()
 
 	logger.Info("hello world")
 

@@ -45,8 +45,9 @@ type SourceConfig struct {
 
 // MirrorTarget is one push destination.
 type MirrorTarget struct {
-	URL  string     `yaml:"url"`
-	Auth AuthConfig `yaml:"auth"`
+	URL          string     `yaml:"url"`
+	Auth         AuthConfig `yaml:"auth"`
+	PushStrategy string     `yaml:"push_strategy"` // "mirror" (default), "branches+tags"
 }
 
 // RepoConfig is one full mirroring job.
@@ -228,6 +229,12 @@ func (c *Config) Validate() error {
 				return fmt.Errorf("repo %q: duplicate mirror URL %q", r.Name, m.URL)
 			}
 			mirrorURLs[m.URL] = true
+			switch m.PushStrategy {
+			case "", "mirror", "branches+tags":
+				// valid
+			default:
+				return fmt.Errorf("repo %q mirror %q: unknown push_strategy %q (must be \"mirror\" or \"branches+tags\")", r.Name, m.URL, m.PushStrategy)
+			}
 			if err := validateAuth(r.Name, "mirror "+m.URL, m.Auth); err != nil {
 				return err
 			}

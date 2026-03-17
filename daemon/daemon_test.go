@@ -68,7 +68,7 @@ func TestWithRetry_ExponentialBackoff(t *testing.T) {
 	calls := 0
 	timestamps := []time.Time{}
 
-	withRetry(context.Background(), 4, base, func() error {
+	_ = withRetry(context.Background(), 4, base, func() error {
 		timestamps = append(timestamps, time.Now())
 		calls++
 		return errTest

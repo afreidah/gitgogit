@@ -25,8 +25,27 @@ system-uninstall: ## Remove binary from $(PREFIX)/bin
 test: ## Run Go tests
 	go test ./...
 
+vet: ## Run Go vet static analysis
+	go vet ./...
+
+lint: ## Run Go linter
+	go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.10.1 run ./...
+
+govulncheck: ## Scan Go dependencies for known vulnerabilities
+	govulncheck ./...
+
+docker-build: ## Build Docker image
+	docker build -t $(BINARY):latest .
+
+docker-run: docker-build ## Run container with mounted config
+	docker run --rm --network host \
+		-v $${CONFIG:-config.yaml}:/home/gitgogit/.config/gitgogit/config.yaml:ro \
+		-v gitgogit-cache:/home/gitgogit/.local/share/gitgogit \
+		--env-file <(env | grep -iE 'TOKEN|KEY') \
+		$(BINARY):latest
+
 clean: ## Remove build artifacts
 	rm -f $(BINARY)
 
-.PHONY: help build install system-install system-uninstall test clean
+.PHONY: help build install system-install system-uninstall test vet lint govulncheck docker-build docker-run clean
 .DEFAULT_GOAL := help

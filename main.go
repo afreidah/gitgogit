@@ -109,7 +109,7 @@ func mustDefaultLogPath() string {
 func runStart(args []string) {
 	fs := flag.NewFlagSet("start", flag.ExitOnError)
 	configPath := fs.String("config", mustDefaultConfigPath(), "path to config file")
-	fs.Parse(args)
+	_ = fs.Parse(args)
 
 	cfg, err := loadConfig(*configPath, config.CLIOverrides{})
 	if err != nil {
@@ -150,7 +150,7 @@ func runStart(args []string) {
 func runDaemonChild(args []string) {
 	fs := flag.NewFlagSet("daemon-child", flag.ExitOnError)
 	configPath := fs.String("config", mustDefaultConfigPath(), "")
-	fs.Parse(args)
+	_ = fs.Parse(args)
 
 	cfg, err := loadConfig(*configPath, config.CLIOverrides{})
 	if err != nil {
@@ -167,14 +167,14 @@ func runDaemonChild(args []string) {
 		fmt.Fprintf(os.Stderr, "log setup: %v\n", err)
 		os.Exit(1)
 	}
-	defer closeLog()
+	defer func() { _ = closeLog() }()
 
 	pidPath := mustDefaultPIDPath()
 	if err := daemon.WritePID(pidPath); err != nil {
 		logger.Error("write pid file", slog.String("error", err.Error()))
 		os.Exit(1)
 	}
-	defer daemon.RemovePID(pidPath)
+	defer func() { _ = daemon.RemovePID(pidPath) }()
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
 	defer stop()
@@ -186,7 +186,7 @@ func runDaemonChild(args []string) {
 
 func runStop(args []string) {
 	fs := flag.NewFlagSet("stop", flag.ExitOnError)
-	fs.Parse(args)
+	_ = fs.Parse(args)
 
 	pidPath := mustDefaultPIDPath()
 	pid, running, err := daemon.IsRunning(pidPath)
@@ -208,7 +208,7 @@ func runStop(args []string) {
 
 func runStatus(args []string) {
 	fs := flag.NewFlagSet("status", flag.ExitOnError)
-	fs.Parse(args)
+	_ = fs.Parse(args)
 
 	pidPath := mustDefaultPIDPath()
 	pid, running, err := daemon.IsRunning(pidPath)
@@ -234,7 +234,7 @@ func runSync(args []string) {
 	interval := fs.String("interval", "", "poll interval override")
 	logLevel := fs.String("log-level", "", "log level override")
 	repo := fs.String("repo", "", "sync only this repo by name")
-	fs.Parse(args)
+	_ = fs.Parse(args)
 
 	cfg, err := loadConfig(*configPath, config.CLIOverrides{
 		Interval: *interval,
@@ -251,7 +251,7 @@ func runSync(args []string) {
 		fmt.Fprintf(os.Stderr, "log setup: %v\n", err)
 		os.Exit(1)
 	}
-	defer closeLog()
+	defer func() { _ = closeLog() }()
 
 	ctx := context.Background()
 	exitCode := 0
@@ -285,7 +285,7 @@ func runSync(args []string) {
 func runList(args []string) {
 	fs := flag.NewFlagSet("list", flag.ExitOnError)
 	configPath := fs.String("config", mustDefaultConfigPath(), "path to config file")
-	fs.Parse(args)
+	_ = fs.Parse(args)
 
 	cfg, err := config.Load(*configPath)
 	if err != nil {
@@ -316,7 +316,7 @@ func runList(args []string) {
 func runAdd(args []string) {
 	fs := flag.NewFlagSet("add", flag.ExitOnError)
 	configPath := fs.String("config", mustDefaultConfigPath(), "path to config file")
-	fs.Parse(args)
+	_ = fs.Parse(args)
 
 	// Load existing config if present; otherwise start with an empty one.
 	cfg, err := config.Load(*configPath)

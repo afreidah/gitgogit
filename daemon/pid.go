@@ -23,7 +23,7 @@ func WritePID(path string) error {
 		return fmt.Errorf("write pid: %w", err)
 	}
 	if err := os.Rename(tmp, path); err != nil {
-		os.Remove(tmp) // best-effort cleanup
+		_ = os.Remove(tmp) // best-effort cleanup
 		return fmt.Errorf("rename pid: %w", err)
 	}
 	return nil
