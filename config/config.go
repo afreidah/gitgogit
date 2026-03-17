@@ -79,19 +79,28 @@ type CLIOverrides struct {
 	Repo       string
 }
 
-func DefaultConfigPath() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".config", "gitgogit", "config.yaml")
+func DefaultConfigPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("default config path: %w", err)
+	}
+	return filepath.Join(home, ".config", "gitgogit", "config.yaml"), nil
 }
 
-func DefaultPIDPath() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".local", "share", "gitgogit", "gitgogit.pid")
+func DefaultPIDPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("default pid path: %w", err)
+	}
+	return filepath.Join(home, ".local", "share", "gitgogit", "gitgogit.pid"), nil
 }
 
-func DefaultLogPath() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".local", "share", "gitgogit", "gitgogit.log")
+func DefaultLogPath() (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("default log path: %w", err)
+	}
+	return filepath.Join(home, ".local", "share", "gitgogit", "gitgogit.log"), nil
 }
 
 // ExpandPath replaces a leading ~ with the user home directory.
@@ -169,6 +178,9 @@ func (c *Config) Merge(o CLIOverrides) error {
 		if err != nil {
 			return fmt.Errorf("invalid --interval %q: %w", o.Interval, err)
 		}
+		if dur <= 0 {
+			return fmt.Errorf("invalid --interval %q: must be positive", o.Interval)
+		}
 		c.Daemon.Interval.Duration = dur
 	}
 	if o.LogLevel != "" {
@@ -179,6 +191,16 @@ func (c *Config) Merge(o CLIOverrides) error {
 
 // Validate checks required fields and internal consistency.
 func (c *Config) Validate() error {
+	if c.Daemon.Interval.Duration <= 0 {
+		return fmt.Errorf("daemon interval must be positive, got %v", c.Daemon.Interval.Duration)
+	}
+	if c.Daemon.RetryAttempts <= 0 {
+		return fmt.Errorf("daemon retry_attempts must be positive, got %d", c.Daemon.RetryAttempts)
+	}
+	if c.Daemon.RetryBackoff.Duration <= 0 {
+		return fmt.Errorf("daemon retry_backoff must be positive, got %v", c.Daemon.RetryBackoff.Duration)
+	}
+
 	names := make(map[string]bool)
 	for _, r := range c.Repos {
 		if r.Name == "" {
@@ -219,6 +241,9 @@ func validateAuth(repo, context string, a AuthConfig) error {
 	case "ssh":
 		if a.Key == "" {
 			return fmt.Errorf("repo %q %s: ssh auth requires key", repo, context)
+		}
+		if _, err := os.Stat(a.Key); err != nil {
+			return fmt.Errorf("repo %q %s: ssh key %q: %w", repo, context, a.Key, err)
 		}
 	case "token":
 		if a.Env == "" {

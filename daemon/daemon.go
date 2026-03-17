@@ -12,7 +12,11 @@ import (
 	"gitgogit/mirror"
 )
 
-const hotReloadInterval = 5 * time.Second
+const (
+	hotReloadInterval   = 5 * time.Second
+	maxConcurrentSyncs  = 10
+	shutdownTimeout     = 30 * time.Second
+)
 
 // withRetry calls fn up to attempts times with exponential backoff.
 // Backoff sequence: base, 2*base, 4*base, … capped at 5 minutes.
@@ -55,7 +59,7 @@ type Daemon struct {
 	mu        sync.RWMutex // guards cfg
 	logger    *slog.Logger
 	wg        sync.WaitGroup
-	newRunner func(config.RepoConfig, *slog.Logger) syncer // nil → mirror.NewRunner
+	newRunner func(config.RepoConfig, *slog.Logger) (syncer, error) // nil → mirror.NewRunner
 }
 
 func New(cfg *config.Config, logger *slog.Logger) *Daemon {
@@ -64,7 +68,19 @@ func New(cfg *config.Config, logger *slog.Logger) *Daemon {
 
 // SyncRepo mirrors one repo with retry. It constructs a Runner, calls Sync inside withRetry, and returns the results from the final attempt.
 func (d *Daemon) SyncRepo(ctx context.Context, repo config.RepoConfig) []mirror.SyncResult {
-	runner := d.makeRunner(repo)
+	runner, err := d.makeRunner(repo)
+	if err != nil {
+		var results []mirror.SyncResult
+		for _, m := range repo.Mirrors {
+			results = append(results, mirror.SyncResult{
+				Repo:      repo.Name,
+				MirrorURL: m.URL,
+				Err:       err,
+			})
+		}
+		return results
+	}
+
 	var results []mirror.SyncResult
 
 	d.mu.RLock()
@@ -72,7 +88,7 @@ func (d *Daemon) SyncRepo(ctx context.Context, repo config.RepoConfig) []mirror.
 	backoff := d.cfg.Daemon.RetryBackoff.Duration
 	d.mu.RUnlock()
 
-	withRetry(ctx, attempts, backoff, func() error {
+	retryErr := withRetry(ctx, attempts, backoff, func() error {
 		results = runner.Sync(ctx)
 		for _, r := range results {
 			if r.Err != nil {
@@ -81,6 +97,16 @@ func (d *Daemon) SyncRepo(ctx context.Context, repo config.RepoConfig) []mirror.
 		}
 		return nil
 	})
+
+	if retryErr != nil && len(results) == 0 {
+		for _, m := range repo.Mirrors {
+			results = append(results, mirror.SyncResult{
+				Repo:      repo.Name,
+				MirrorURL: m.URL,
+				Err:       retryErr,
+			})
+		}
+	}
 
 	return results
 }
@@ -102,7 +128,7 @@ func (d *Daemon) Run(ctx context.Context, configPath string) {
 				}
 				lastMod = newMod
 				if err := d.reloadConfig(configPath); err != nil {
-					d.logger.Warn("config reload failed", slog.String("err", err.Error()))
+					d.logger.Warn("config reload failed", slog.String("error", err.Error()))
 				} else {
 					d.logger.Info("config reloaded", slog.String("path", configPath))
 				}
@@ -122,7 +148,17 @@ func (d *Daemon) Run(ctx context.Context, configPath string) {
 	for {
 		select {
 		case <-ctx.Done():
-			d.wg.Wait()
+			done := make(chan struct{})
+			go func() {
+				d.wg.Wait()
+				close(done)
+			}()
+			select {
+			case <-done:
+				d.logger.Info("all syncs completed, shutting down")
+			case <-time.After(shutdownTimeout):
+				d.logger.Warn("shutdown timeout exceeded, forcing exit")
+			}
 			return
 		case <-ticker.C:
 			d.mu.RLock()
@@ -147,7 +183,7 @@ func (d *Daemon) reloadConfig(path string) error {
 }
 
 // makeRunner returns a syncer for repo, using the test-injectable factory if set.
-func (d *Daemon) makeRunner(repo config.RepoConfig) syncer {
+func (d *Daemon) makeRunner(repo config.RepoConfig) (syncer, error) {
 	if d.newRunner != nil {
 		return d.newRunner(repo, d.logger)
 	}
@@ -155,24 +191,27 @@ func (d *Daemon) makeRunner(repo config.RepoConfig) syncer {
 }
 
 // runOnce syncs every configured repo, each in its own goroutine.
+// Concurrency is capped by maxConcurrentSyncs.
 func (d *Daemon) runOnce(ctx context.Context) {
 	d.mu.RLock()
 	repos := make([]config.RepoConfig, len(d.cfg.Repos))
 	copy(repos, d.cfg.Repos)
 	d.mu.RUnlock()
 
+	sem := make(chan struct{}, maxConcurrentSyncs)
 	for _, repo := range repos {
-		repo := repo
 		d.wg.Add(1)
 		go func() {
 			defer d.wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
 			results := d.SyncRepo(ctx, repo)
 			for _, r := range results {
 				if r.Err != nil {
 					d.logger.Error("sync failed",
 						slog.String("repo", r.Repo),
 						slog.String("mirror", r.MirrorURL),
-						slog.String("err", r.Err.Error()),
+						slog.String("error", r.Err.Error()),
 					)
 				} else {
 					d.logger.Info("synced",

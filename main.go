@@ -79,9 +79,36 @@ Flags:
 `)
 }
 
+func mustDefaultConfigPath() string {
+	p, err := config.DefaultConfigPath()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+	return p
+}
+
+func mustDefaultPIDPath() string {
+	p, err := config.DefaultPIDPath()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+	return p
+}
+
+func mustDefaultLogPath() string {
+	p, err := config.DefaultLogPath()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+	return p
+}
+
 func runStart(args []string) {
 	fs := flag.NewFlagSet("start", flag.ExitOnError)
-	configPath := fs.String("config", config.DefaultConfigPath(), "path to config file")
+	configPath := fs.String("config", mustDefaultConfigPath(), "path to config file")
 	fs.Parse(args)
 
 	cfg, err := loadConfig(*configPath, config.CLIOverrides{})
@@ -90,7 +117,7 @@ func runStart(args []string) {
 		os.Exit(1)
 	}
 
-	pidPath := config.DefaultPIDPath()
+	pidPath := mustDefaultPIDPath()
 	if _, running, _ := daemon.IsRunning(pidPath); running {
 		pid, _, _ := daemon.IsRunning(pidPath)
 		fmt.Fprintf(os.Stderr, "daemon is already running (pid %d)\n", pid)
@@ -99,7 +126,7 @@ func runStart(args []string) {
 
 	logPath := cfg.Daemon.LogFile
 	if logPath == "" {
-		logPath = config.DefaultLogPath()
+		logPath = mustDefaultLogPath()
 	}
 
 	exe, err := os.Executable()
@@ -122,7 +149,7 @@ func runStart(args []string) {
 
 func runDaemonChild(args []string) {
 	fs := flag.NewFlagSet("daemon-child", flag.ExitOnError)
-	configPath := fs.String("config", config.DefaultConfigPath(), "")
+	configPath := fs.String("config", mustDefaultConfigPath(), "")
 	fs.Parse(args)
 
 	cfg, err := loadConfig(*configPath, config.CLIOverrides{})
@@ -133,17 +160,18 @@ func runDaemonChild(args []string) {
 
 	logPath := cfg.Daemon.LogFile
 	if logPath == "" {
-		logPath = config.DefaultLogPath()
+		logPath = mustDefaultLogPath()
 	}
-	logger, err := glog.Setup(cfg.Daemon.LogLevel, logPath, io.Discard)
+	logger, closeLog, err := glog.Setup(cfg.Daemon.LogLevel, logPath, io.Discard)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "log setup: %v\n", err)
 		os.Exit(1)
 	}
+	defer closeLog()
 
-	pidPath := config.DefaultPIDPath()
+	pidPath := mustDefaultPIDPath()
 	if err := daemon.WritePID(pidPath); err != nil {
-		logger.Error("write pid file", slog.String("err", err.Error()))
+		logger.Error("write pid file", slog.String("error", err.Error()))
 		os.Exit(1)
 	}
 	defer daemon.RemovePID(pidPath)
@@ -160,7 +188,7 @@ func runStop(args []string) {
 	fs := flag.NewFlagSet("stop", flag.ExitOnError)
 	fs.Parse(args)
 
-	pidPath := config.DefaultPIDPath()
+	pidPath := mustDefaultPIDPath()
 	pid, running, err := daemon.IsRunning(pidPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -182,7 +210,7 @@ func runStatus(args []string) {
 	fs := flag.NewFlagSet("status", flag.ExitOnError)
 	fs.Parse(args)
 
-	pidPath := config.DefaultPIDPath()
+	pidPath := mustDefaultPIDPath()
 	pid, running, err := daemon.IsRunning(pidPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "error: %v\n", err)
@@ -202,7 +230,7 @@ func runStatus(args []string) {
 
 func runSync(args []string) {
 	fs := flag.NewFlagSet("sync", flag.ExitOnError)
-	configPath := fs.String("config", config.DefaultConfigPath(), "path to config file")
+	configPath := fs.String("config", mustDefaultConfigPath(), "path to config file")
 	interval := fs.String("interval", "", "poll interval override")
 	logLevel := fs.String("log-level", "", "log level override")
 	repo := fs.String("repo", "", "sync only this repo by name")
@@ -218,11 +246,12 @@ func runSync(args []string) {
 		os.Exit(1)
 	}
 
-	logger, err := glog.Setup(cfg.Daemon.LogLevel, cfg.Daemon.LogFile, os.Stdout)
+	logger, closeLog, err := glog.Setup(cfg.Daemon.LogLevel, cfg.Daemon.LogFile, os.Stdout)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "log setup: %v\n", err)
 		os.Exit(1)
 	}
+	defer closeLog()
 
 	ctx := context.Background()
 	exitCode := 0
@@ -238,7 +267,7 @@ func runSync(args []string) {
 				logger.Error("sync failed",
 					slog.String("repo", res.Repo),
 					slog.String("mirror", res.MirrorURL),
-					slog.String("err", res.Err.Error()),
+					slog.String("error", res.Err.Error()),
 				)
 				exitCode = 1
 			} else {
@@ -255,7 +284,7 @@ func runSync(args []string) {
 
 func runList(args []string) {
 	fs := flag.NewFlagSet("list", flag.ExitOnError)
-	configPath := fs.String("config", config.DefaultConfigPath(), "path to config file")
+	configPath := fs.String("config", mustDefaultConfigPath(), "path to config file")
 	fs.Parse(args)
 
 	cfg, err := config.Load(*configPath)
@@ -278,12 +307,15 @@ func runList(args []string) {
 		}
 		fmt.Fprintf(w, "%s\t%s\t%s\n", r.Name, r.Source.URL, strings.Join(mirrorURLs, ", "))
 	}
-	w.Flush()
+	if err := w.Flush(); err != nil {
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
 }
 
 func runAdd(args []string) {
 	fs := flag.NewFlagSet("add", flag.ExitOnError)
-	configPath := fs.String("config", config.DefaultConfigPath(), "path to config file")
+	configPath := fs.String("config", mustDefaultConfigPath(), "path to config file")
 	fs.Parse(args)
 
 	// Load existing config if present; otherwise start with an empty one.
@@ -292,7 +324,11 @@ func runAdd(args []string) {
 		if !errors.Is(err, os.ErrNotExist) {
 			fmt.Fprintf(os.Stderr, "warning: could not load config: %v\n", err)
 			fmt.Fprint(os.Stderr, "proceed with an empty config? [y/N] ")
-			line, _ := bufio.NewReader(os.Stdin).ReadString('\n')
+			line, readErr := bufio.NewReader(os.Stdin).ReadString('\n')
+			if readErr != nil {
+				fmt.Fprintf(os.Stderr, "\nerror reading input: %v\n", readErr)
+				os.Exit(1)
+			}
 			if strings.TrimSpace(strings.ToLower(line)) != "y" {
 				os.Exit(1)
 			}
@@ -307,7 +343,11 @@ func runAdd(args []string) {
 
 	prompt := func(label string) string {
 		fmt.Printf("%s: ", label)
-		line, _ := reader.ReadString('\n')
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "\nerror reading input: %v\n", err)
+			os.Exit(1)
+		}
 		return strings.TrimSpace(line)
 	}
 
@@ -354,7 +394,11 @@ func runAdd(args []string) {
 func promptAuth(reader *bufio.Reader, context string) config.AuthConfig {
 	prompt := func(label string) string {
 		fmt.Printf("%s: ", label)
-		line, _ := reader.ReadString('\n')
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "\nerror reading input: %v\n", err)
+			os.Exit(1)
+		}
 		return strings.TrimSpace(line)
 	}
 
