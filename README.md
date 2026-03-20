@@ -172,5 +172,9 @@ gitgogit status
 gitgogit stop
 ```
 
+## Known limitations / TODOs
+
+- **Per-mirror retry granularity** (`daemon.SyncRepo`): when a sync cycle produces errors across multiple mirrors, `withRetry` currently makes its retry decision based on the first error encountered and discards the rest. All mirrors are re-synced on every retry regardless of which ones actually failed. A future improvement would collect all per-mirror errors (e.g. via `errors.Join`) so that the retry context reflects the full failure set and individual mirror errors are not silently dropped.
+
 ## Author
 Evan Hutchinson (ev-the-dev)
