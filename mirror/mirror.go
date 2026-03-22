@@ -106,12 +106,25 @@ func (r *Runner) Push(ctx context.Context, target config.MirrorTarget) error {
 
 	switch target.PushStrategy {
 	case "branches+tags":
-		if err := r.runGit(ctx, extraEnv, "-C", r.CacheDir, "push", "--all", resolvedURL); err != nil {
+		allArgs := []string{"-C", r.CacheDir, "push", "--all"}
+		tagsArgs := []string{"-C", r.CacheDir, "push", "--tags"}
+		if target.Force {
+			allArgs = append(allArgs, "--force")
+			tagsArgs = append(tagsArgs, "--force")
+		}
+		allArgs = append(allArgs, resolvedURL)
+		tagsArgs = append(tagsArgs, resolvedURL)
+		if err := r.runGit(ctx, extraEnv, allArgs...); err != nil {
 			return err
 		}
-		return r.runGit(ctx, extraEnv, "-C", r.CacheDir, "push", "--tags", resolvedURL)
+		return r.runGit(ctx, extraEnv, tagsArgs...)
 	default: // "mirror" or ""
-		return r.runGit(ctx, extraEnv, "-C", r.CacheDir, "push", "--mirror", resolvedURL)
+		args := []string{"-C", r.CacheDir, "push", "--mirror"}
+		if target.Force {
+			args = append(args, "--force")
+		}
+		args = append(args, resolvedURL)
+		return r.runGit(ctx, extraEnv, args...)
 	}
 }
 

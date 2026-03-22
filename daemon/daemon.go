@@ -60,12 +60,12 @@ type Daemon struct {
 	mu        sync.RWMutex // guards cfg
 	logger    *slog.Logger
 	wg        sync.WaitGroup
-	Status    *status.Store                                         // nil when web UI is disabled
+	Status    *status.Store
 	newRunner func(config.RepoConfig, *slog.Logger) (syncer, error) // nil → mirror.NewRunner
 }
 
-func New(cfg *config.Config, logger *slog.Logger, store *status.Store) *Daemon {
-	return &Daemon{cfg: cfg, logger: logger, Status: store}
+func New(cfg *config.Config, logger *slog.Logger) *Daemon {
+	return &Daemon{cfg: cfg, logger: logger, Status: status.NewStore()}
 }
 
 // SyncRepo mirrors one repo with retry. It constructs a Runner, calls Sync inside withRetry, and returns the results from the final attempt.
@@ -133,10 +133,6 @@ func (d *Daemon) TriggerSync(ctx context.Context, repoName string) error {
 		return fmt.Errorf("repo %q not found", repoName)
 	}
 
-	if d.Status == nil {
-		return fmt.Errorf("status store not available")
-	}
-
 	unlock, ok := d.Status.TryLockRepo(repoName)
 	if !ok {
 		return fmt.Errorf("sync already in progress for %q", repoName)
@@ -170,11 +166,9 @@ func (d *Daemon) TriggerSync(ctx context.Context, repoName string) error {
 // If configPath is non-empty, a goroutine watches the file for changes and hot-reloads on modification.
 // Blocks until ctx is cancelled, then waits for all in-flight syncs to complete before returning.
 func (d *Daemon) Run(ctx context.Context, configPath string) {
-	if d.Status != nil {
-		d.mu.RLock()
-		d.Status.EnsureRepos(d.cfg.Repos)
-		d.mu.RUnlock()
-	}
+	d.mu.RLock()
+	d.Status.EnsureRepos(d.cfg.Repos)
+	d.mu.RUnlock()
 
 	if configPath != "" {
 		var lastMod time.Time
@@ -192,11 +186,9 @@ func (d *Daemon) Run(ctx context.Context, configPath string) {
 					d.logger.Warn("config reload failed", slog.String("error", err.Error()))
 				} else {
 					d.logger.Info("config reloaded", slog.String("path", configPath))
-					if d.Status != nil {
-						d.mu.RLock()
-						d.Status.EnsureRepos(d.cfg.Repos)
-						d.mu.RUnlock()
-					}
+					d.mu.RLock()
+					d.Status.EnsureRepos(d.cfg.Repos)
+					d.mu.RUnlock()
 				}
 			}
 		}()
@@ -270,9 +262,7 @@ func (d *Daemon) runOnce(ctx context.Context) {
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			results := d.SyncRepo(ctx, repo)
-			if d.Status != nil {
-				d.Status.Record(repo.Name, results)
-			}
+			d.Status.Record(repo.Name, results)
 			for _, r := range results {
 				if r.Err != nil {
 					d.logger.Error("sync failed",

@@ -48,6 +48,7 @@ type MirrorTarget struct {
 	URL          string     `yaml:"url"`
 	Auth         AuthConfig `yaml:"auth"`
 	PushStrategy string     `yaml:"push_strategy"` // "mirror" (default), "branches+tags"
+	Force        bool       `yaml:"force"`          // add --force to push commands
 }
 
 // RepoConfig is one full mirroring job.

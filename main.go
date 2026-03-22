@@ -19,7 +19,6 @@ import (
 	"gitgogit/config"
 	"gitgogit/daemon"
 	glog "gitgogit/log"
-	"gitgogit/status"
 	"gitgogit/web"
 )
 
@@ -181,11 +180,10 @@ func runDaemonChild(args []string) {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
 	defer stop()
 
-	store := status.NewStore()
-	d := daemon.New(cfg, logger, store)
+	d := daemon.New(cfg, logger)
 
 	if cfg.Daemon.Web.Enabled {
-		srv := web.New(store, d, logger)
+		srv := web.New(d.Status, d, logger)
 		if err := srv.Start(cfg.Daemon.Web.Listen); err != nil {
 			logger.Error("start web server", slog.String("error", err.Error()))
 			os.Exit(1)
@@ -274,7 +272,7 @@ func runSync(args []string) {
 
 	ctx := context.Background()
 	exitCode := 0
-	d := daemon.New(cfg, logger, nil)
+	d := daemon.New(cfg, logger)
 
 	for _, r := range cfg.Repos {
 		if *repo != "" && r.Name != *repo {

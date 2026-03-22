@@ -272,6 +272,44 @@ func TestValidate_TokenMissingEnv(t *testing.T) {
 	}
 }
 
+func TestLoad_ForceOption(t *testing.T) {
+	path := writeConfig(t, `
+repos:
+  - name: repo
+    source:
+      url: git@github.com:org/repo.git
+    mirrors:
+      - url: git@codeberg.org:org/repo.git
+        push_strategy: "branches+tags"
+        force: true
+`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if !cfg.Repos[0].Mirrors[0].Force {
+		t.Error("expected force=true, got false")
+	}
+}
+
+func TestLoad_ForceDefaultsFalse(t *testing.T) {
+	path := writeConfig(t, `
+repos:
+  - name: repo
+    source:
+      url: git@github.com:org/repo.git
+    mirrors:
+      - url: git@codeberg.org:org/repo.git
+`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatalf("Load() error: %v", err)
+	}
+	if cfg.Repos[0].Mirrors[0].Force {
+		t.Error("expected force=false by default, got true")
+	}
+}
+
 func TestMerge_OverridesInterval(t *testing.T) {
 	cfg := &Config{Daemon: DaemonConfig{Interval: Duration{60 * time.Second}}}
 	if err := cfg.Merge(CLIOverrides{Interval: "5m"}); err != nil {

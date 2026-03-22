@@ -76,6 +76,7 @@ repos:
     mirrors:
       - url: git@codeberg.org:you/myrepo.git
         push_strategy: branches+tags   # safe for hosting platforms
+        force: true                    # overwrite diverged refs on mirror
         auth:
           type: ssh
           key: ~/.ssh/id_ed25519
@@ -111,6 +112,17 @@ Per-mirror `push_strategy` controls how refs are pushed to the target:
 |----------------|----------|
 | `mirror`       | Default. `git push --mirror` — pushes all refs. Use for bare backup targets. |
 | `branches+tags`| `git push --all` + `git push --tags` — skips platform-internal refs like `refs/pull/*`. Use when mirroring to hosting platforms (Forgejo, Gitea, GitLab). |
+
+### Force push
+
+Per-mirror `force: true` adds `--force` to git push commands, allowing the source to overwrite diverged refs on the mirror. This is useful when the source is the single source of truth and the mirror may have been modified independently (e.g., amended or rebased branches). Defaults to `false`.
+
+```yaml
+mirrors:
+  - url: https://forgejo.example.com/org/repo.git
+    push_strategy: branches+tags
+    force: true
+```
 
 ## CLI reference
 

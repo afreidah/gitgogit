@@ -8,6 +8,7 @@ repos:
     mirrors:
       - url: git@codeberg.org:myorg/my-project.git
         push_strategy: branches+tags   # or "mirror" (default) for bare backups
+        force: false                   # add --force to push (overwrites diverged refs)
         auth:
           type: ssh
           key: ~/.ssh/id_ed25519

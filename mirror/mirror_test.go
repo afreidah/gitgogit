@@ -177,6 +177,156 @@ func TestRunner_EnsureCloned_InvalidSource(t *testing.T) {
 	}
 }
 
+// divergeMirror clones a bare mirror, adds a divergent commit, and force-pushes
+// it back, simulating a non-fast-forward situation on the mirror.
+func divergeMirror(t *testing.T, mirrorDir string) {
+	t.Helper()
+	divergeDir := t.TempDir()
+
+	run := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...)
+		cmd.Dir = divergeDir
+		cmd.Env = append(os.Environ(),
+			"GIT_AUTHOR_NAME=Test",
+			"GIT_AUTHOR_EMAIL=test@test.com",
+			"GIT_COMMITTER_NAME=Test",
+			"GIT_COMMITTER_EMAIL=test@test.com",
+		)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+
+	run("clone", "-b", "main", mirrorDir, divergeDir)
+	if err := os.WriteFile(filepath.Join(divergeDir, "diverge.txt"), []byte("diverge"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run("add", ".")
+	run("commit", "-m", "divergent commit")
+	run("push", "--force", "origin", "main")
+}
+
+func TestRunner_Sync_BranchesTagsForce(t *testing.T) {
+	hasGit(t)
+
+	sourceDir := initRepoWithCommit(t)
+	mirrorDir := t.TempDir()
+	initBareRepo(t, mirrorDir)
+	cacheDir := filepath.Join(t.TempDir(), "cache.git")
+
+	repo := config.RepoConfig{
+		Name:   "force-test",
+		Source: config.SourceConfig{URL: sourceDir},
+		Mirrors: []config.MirrorTarget{
+			{URL: mirrorDir, PushStrategy: "branches+tags", Force: true},
+		},
+	}
+
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	runner := &Runner{Repo: repo, CacheDir: cacheDir, Logger: logger}
+	ctx := context.Background()
+
+	// Initial sync.
+	results := runner.Sync(ctx)
+	for _, r := range results {
+		if r.Err != nil {
+			t.Fatalf("initial Sync() error: %v", r.Err)
+		}
+	}
+
+	// Diverge the mirror so a normal push would fail.
+	divergeMirror(t, mirrorDir)
+
+	// Sync again — without force this would fail with non-fast-forward.
+	results = runner.Sync(ctx)
+	for _, r := range results {
+		if r.Err != nil {
+			t.Errorf("force Sync() error: %v", r.Err)
+		}
+	}
+}
+
+func TestRunner_Sync_BranchesTagsNoForceRejectsNonFF(t *testing.T) {
+	hasGit(t)
+
+	sourceDir := initRepoWithCommit(t)
+	mirrorDir := t.TempDir()
+	initBareRepo(t, mirrorDir)
+	cacheDir := filepath.Join(t.TempDir(), "cache.git")
+
+	repo := config.RepoConfig{
+		Name:   "noforce-test",
+		Source: config.SourceConfig{URL: sourceDir},
+		Mirrors: []config.MirrorTarget{
+			{URL: mirrorDir, PushStrategy: "branches+tags", Force: false},
+		},
+	}
+
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	runner := &Runner{Repo: repo, CacheDir: cacheDir, Logger: logger}
+	ctx := context.Background()
+
+	// Initial sync.
+	results := runner.Sync(ctx)
+	for _, r := range results {
+		if r.Err != nil {
+			t.Fatalf("initial Sync() error: %v", r.Err)
+		}
+	}
+
+	// Diverge the mirror so a normal push would fail.
+	divergeMirror(t, mirrorDir)
+
+	// Sync without force should fail.
+	results = runner.Sync(ctx)
+	hasErr := false
+	for _, r := range results {
+		if r.Err != nil {
+			hasErr = true
+		}
+	}
+	if !hasErr {
+		t.Error("expected non-fast-forward error without force, but sync succeeded")
+	}
+}
+
+func TestRunner_Sync_MirrorForce(t *testing.T) {
+	hasGit(t)
+
+	sourceDir := initRepoWithCommit(t)
+	mirrorDir := t.TempDir()
+	initBareRepo(t, mirrorDir)
+	cacheDir := filepath.Join(t.TempDir(), "cache.git")
+
+	repo := config.RepoConfig{
+		Name:   "mirror-force-test",
+		Source: config.SourceConfig{URL: sourceDir},
+		Mirrors: []config.MirrorTarget{
+			{URL: mirrorDir, PushStrategy: "mirror", Force: true},
+		},
+	}
+
+	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	runner := &Runner{Repo: repo, CacheDir: cacheDir, Logger: logger}
+	ctx := context.Background()
+
+	results := runner.Sync(ctx)
+	for _, r := range results {
+		if r.Err != nil {
+			t.Fatalf("Sync() with mirror+force error: %v", r.Err)
+		}
+	}
+
+	// Second sync should also succeed.
+	results = runner.Sync(ctx)
+	for _, r := range results {
+		if r.Err != nil {
+			t.Errorf("second Sync() with mirror+force error: %v", r.Err)
+		}
+	}
+}
+
 func TestRedactURL(t *testing.T) {
 	cases := []struct {
 		input string
