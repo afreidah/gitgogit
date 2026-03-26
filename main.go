@@ -21,6 +21,8 @@ import (
 	glog "gitgogit/log"
 )
 
+var version = "dev"
+
 func main() {
 	// The --daemon-child sentinel is checked before subcommand dispatch so it
 	// never appears in help output or shell completions.
