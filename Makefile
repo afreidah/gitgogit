@@ -82,6 +82,9 @@ release: platform-all
 		(echo "Cannot release from non-main branch" && false)
 	@echo "Checking for unpushed commits..." && git fetch && \
 		test "" = "`git cherry`" || (echo "Cannot release with unpushed commits" && false)
+	@echo "Checking that tag $(VERSION) exists on remote..." && \
+		git ls-remote --tags origin "refs/tags/$(VERSION)" | grep -q "$(VERSION)" || \
+		(echo "Tag $(VERSION) has not been pushed — run: git push origin $(VERSION)" && false)
 	gh release create "$(VERSION)" $(DIST)/$(BINARY)-* \
 		--title "$(VERSION)" \
 		--generate-notes
