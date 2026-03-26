@@ -178,5 +178,7 @@ gitgogit stop
 
 - How to handle private repository mirroring.
 
+- **Windows is not currently supported.** The daemon relies on Unix-specific primitives (`Setsid`, `SIGTERM`, PID files) that have no direct Windows equivalent. A future port would require replacing the daemonization and process management layer with a Windows service implementation.
+
 ## Author
 Evan Hutchinson (ev-the-dev)

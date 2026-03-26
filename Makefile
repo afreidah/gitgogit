@@ -9,7 +9,7 @@ GO_FLAGS += -ldflags="-s -w -X 'main.version=$(VERSION)'"
 # Avoid embedding build path in executable
 GO_FLAGS += -trimpath
 
-.PHONY: build install system-install system-uninstall test clean platform-all release
+.PHONY: build install system-install system-uninstall test clean platform-all platform-unixlike platform-darwin-arm64 platform-darwin-amd64 platform-linux-amd64 platform-linux-arm64 release
 
 build:
 	go build -o $(BINARY) .
@@ -45,9 +45,7 @@ platform-all:
 		platform-darwin-arm64 \
 		platform-darwin-amd64 \
 		platform-linux-amd64 \
-		platform-linux-arm64 \
-		platform-windows-amd64 \
-		platform-windows-arm64
+		platform-linux-arm64
 
 platform-unixlike:
 	@test -n "$(TGOOS)"   || (echo "GOOS must be set"  && false)
@@ -66,14 +64,6 @@ platform-linux-amd64:
 
 platform-linux-arm64:
 	@$(MAKE) --no-print-directory TGOOS=linux TGOARCH=arm64 platform-unixlike
-
-platform-windows-amd64:
-	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 \
-		go build $(GO_FLAGS) -o "$(DIST)/$(BINARY)-windows-amd64.exe"
-
-platform-windows-arm64:
-	CGO_ENABLED=0 GOOS=windows GOARCH=arm64 \
-		go build $(GO_FLAGS) -o "$(DIST)/$(BINARY)-windows-arm64.exe"
 
   ###########
  # Release #
