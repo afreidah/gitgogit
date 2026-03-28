@@ -2,9 +2,36 @@
 
 A lightweight Git repository mirroring daemon. It watches one or more source repositories and pushes every change to one or more mirror remotes.
 
-## Build & install
+## Install
 
-Requires Go 1.21 or later. The only external dependency is `gopkg.in/yaml.v3`.
+### Install script (recommended)
+
+Downloads and installs the latest release binary for your platform:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/ev-the-dev/gitgogit/main/install.sh | sh
+```
+
+To install a specific version:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/ev-the-dev/gitgogit/main/install.sh | VERSION=v1.0.0 sh
+```
+
+Installs to `/usr/local/bin` by default. Will prompt for `sudo` if needed.
+
+### Manual download
+
+Download the binary for your platform from the [releases page](https://github.com/ev-the-dev/gitgogit/releases), then:
+
+```sh
+chmod +x gitgogit-<os>-<arch>
+sudo mv gitgogit-<os>-<arch> /usr/local/bin/gitgogit
+```
+
+### Build from source
+
+Requires Go 1.24 or later. The only external dependency is `gopkg.in/yaml.v3`.
 
 **User install** — builds and places the binary in `$(go env GOPATH)/bin` (typically `~/go/bin`). No `sudo` required; just ensure `~/go/bin` is on your `$PATH`.
 
