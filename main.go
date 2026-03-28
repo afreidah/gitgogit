@@ -40,6 +40,8 @@ func main() {
 	args := os.Args[2:]
 
 	switch cmd {
+	case "version", "--version":
+		fmt.Println(version)
 	case "sync":
 		runSync(args)
 	case "start":
