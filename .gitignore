@@ -1,3 +1,7 @@
 ## Binary Output
 dist/
 gitgogit
+
+## Local Testing
+Dockerfile
+config.yaml
