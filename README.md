@@ -1,3 +1,7 @@
+<div align="center">
+    <img src="images/gitgophergit.jpg" alt="GitGopherGitBanner" width="100%">
+</div>
+
 # gitgogit
 
 A lightweight Git repository mirroring daemon. It watches one or more source repositories and pushes every change to one or more mirror remotes.
