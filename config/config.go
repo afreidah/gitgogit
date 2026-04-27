@@ -43,10 +43,22 @@ type SourceConfig struct {
 	Auth AuthConfig `yaml:"auth"`
 }
 
+// defaultExcludeRefs are forge-specific ref namespaces that should not be mirrored.
+var defaultExcludeRefs = []string{"refs/pull/*", "refs/merge-requests/*"}
+
 // MirrorTarget is one push destination.
 type MirrorTarget struct {
-	URL  string     `yaml:"url"`
-	Auth AuthConfig `yaml:"auth"`
+	URL         string     `yaml:"url"`
+	Auth        AuthConfig `yaml:"auth"`
+	ExcludeRefs []string   `yaml:"exclude_refs,omitempty"`
+}
+
+// EffectiveExcludeRefs returns the refs to exclude, falling back to defaults when none are configured.
+func (m MirrorTarget) EffectiveExcludeRefs() []string {
+	if len(m.ExcludeRefs) > 0 {
+		return m.ExcludeRefs
+	}
+	return defaultExcludeRefs
 }
 
 // RepoConfig is one full mirroring job.

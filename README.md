@@ -82,6 +82,8 @@ repos:
         auth:
           type: ssh
           key: ~/.ssh/id_ed25519
+        exclude_refs:
+          - refs/pull/*
       - url: https://gitlab.com/you/myrepo.git
         auth:
           type: token
@@ -102,6 +104,26 @@ daemon:
 | `ssh`   | `key`         | Path to private key; `~` is expanded. Sets `GIT_SSH_COMMAND`. |
 | `token` | `env`         | Name of an env var containing the HTTPS token. Injected as `oauth2:TOKEN@` in the URL. |
 | *(none)*| —             | Leave `auth:` out entirely for public repos. |
+
+### Excluding refs
+
+Some forges create internal ref namespaces that have no meaning on other hosts — GitHub stores pull request data under `refs/pull/*`, GitLab uses `refs/merge-requests/*`. Pushing these into a mirror like Gitea will be rejected because Gitea reserves those namespaces for its own PRs.
+
+By default, gitgogit excludes `refs/pull/*` and `refs/merge-requests/*` from every push, so mirroring to Gitea or any other self-hosted forge works without extra configuration.
+
+To override the defaults for a specific mirror, set `exclude_refs` on that mirror:
+
+```yaml
+mirrors:
+  - url: ssh://git@my-gitea-host:2222/myorg/my-project.git
+    auth:
+      type: ssh
+      key: ~/.ssh/id_ed25519
+    exclude_refs:
+      - refs/pull/*
+```
+
+Setting `exclude_refs` replaces the defaults entirely, so list every pattern you want excluded. Branches (`refs/heads/*`), tags (`refs/tags/*`), and notes (`refs/notes/*`) are always mirrored regardless.
 
 ## CLI reference
 

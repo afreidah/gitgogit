@@ -86,7 +86,7 @@ func (r *Runner) Fetch(ctx context.Context) error {
 	return r.runGit(ctx, extraEnv, "-C", r.CacheDir, "fetch", "--prune", "origin")
 }
 
-// Push pushes all refs to one mirror target.
+// Push pushes refs to one mirror target, excluding forge-specific namespaces.
 func (r *Runner) Push(ctx context.Context, target config.MirrorTarget) error {
 	provider, err := auth.Resolve(target.Auth)
 	if err != nil {
@@ -97,7 +97,16 @@ func (r *Runner) Push(ctx context.Context, target config.MirrorTarget) error {
 		return err
 	}
 	r.Logger.Info("pushing", "repo", r.Repo.Name, "mirror", redactURL(resolvedURL))
-	return r.runGit(ctx, extraEnv, "-C", r.CacheDir, "push", "--mirror", resolvedURL)
+
+	args := []string{"-C", r.CacheDir, "push", "--prune", resolvedURL,
+		"+refs/heads/*:refs/heads/*",
+		"+refs/tags/*:refs/tags/*",
+		"+refs/notes/*:refs/notes/*",
+	}
+	for _, pattern := range target.EffectiveExcludeRefs() {
+		args = append(args, "^"+pattern)
+	}
+	return r.runGit(ctx, extraEnv, args...)
 }
 
 // Sync clones if needed, fetches, then pushes to all configured mirrors. Returns one SyncResult per mirror target.

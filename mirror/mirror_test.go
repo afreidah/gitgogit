@@ -177,6 +177,64 @@ func TestRunner_EnsureCloned_InvalidSource(t *testing.T) {
 	}
 }
 
+func TestRunner_Sync_ExcludeRefs(t *testing.T) {
+	hasGit(t)
+
+	sourceDir := initRepoWithCommit(t)
+	mirrorDir := t.TempDir()
+	initBareRepo(t, mirrorDir)
+	cacheDir := filepath.Join(t.TempDir(), "cache.git")
+
+	// Clone source into cache, then create a fake refs/pull ref to simulate a GitHub PR ref.
+	runner := &Runner{
+		Repo: config.RepoConfig{
+			Name:    "excludetest",
+			Source:  config.SourceConfig{URL: sourceDir},
+			Mirrors: []config.MirrorTarget{{URL: mirrorDir}},
+		},
+		CacheDir: cacheDir,
+		Logger:   slog.New(slog.NewTextHandler(os.Stdout, nil)),
+	}
+	ctx := context.Background()
+	if err := runner.EnsureCloned(ctx); err != nil {
+		t.Fatalf("EnsureCloned: %v", err)
+	}
+
+	// Write a fake refs/pull/1/head into the bare cache to simulate what GitHub ships.
+	refPath := filepath.Join(cacheDir, "refs", "pull", "1")
+	if err := os.MkdirAll(refPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	headRef := filepath.Join(cacheDir, "HEAD")
+	headData, err := os.ReadFile(headRef)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Resolve HEAD to a SHA so we can write a valid ref.
+	cmd := exec.Command("git", "-C", cacheDir, "rev-parse", "HEAD")
+	sha, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("rev-parse HEAD: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(refPath, "head"), sha, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_ = headData
+
+	results := runner.Sync(ctx)
+	for _, r := range results {
+		if r.Err != nil {
+			t.Fatalf("Sync() error: %v", r.Err)
+		}
+	}
+
+	// refs/pull/1/head must NOT exist in the mirror.
+	cmd = exec.Command("git", "-C", mirrorDir, "show-ref", "refs/pull/1/head")
+	if out, err := cmd.CombinedOutput(); err == nil {
+		t.Errorf("refs/pull/1/head was pushed to mirror but should have been excluded: %s", out)
+	}
+}
+
 func TestRedactURL(t *testing.T) {
 	cases := []struct {
 		input string
