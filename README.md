@@ -1,10 +1,41 @@
+<div align="center">
+    <img src="images/gitgophergit.jpg" alt="GitGopherGitBanner" width="100%">
+</div>
+
 # gitgogit
 
 ![gitgogit dashboard](dashboard.png)
 
 A lightweight Git repository mirroring daemon. It watches one or more source repositories and pushes every change to one or more mirror remotes.
 
-## Build & install
+## Install
+
+### Install script (recommended)
+
+Downloads and installs the latest release binary for your platform:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/ev-the-dev/gitgogit/main/install.sh | sh
+```
+
+To install a specific version:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/ev-the-dev/gitgogit/main/install.sh | VERSION=v1.0.0 sh
+```
+
+Installs to `/usr/local/bin` by default. Will prompt for `sudo` if needed.
+
+### Manual download
+
+Download the binary for your platform from the [releases page](https://github.com/ev-the-dev/gitgogit/releases), then:
+
+```sh
+chmod +x gitgogit-<os>-<arch>
+sudo mv gitgogit-<os>-<arch> /usr/local/bin/gitgogit
+```
+
+### Build from source
 
 Requires Go 1.26 or later. The only external dependency is `gopkg.in/yaml.v3`.
 
@@ -75,11 +106,11 @@ repos:
         key: ~/.ssh/id_ed25519
     mirrors:
       - url: git@codeberg.org:you/myrepo.git
-        push_strategy: branches+tags   # safe for hosting platforms
-        force: true                    # overwrite diverged refs on mirror
         auth:
           type: ssh
           key: ~/.ssh/id_ed25519
+        exclude_refs:
+          - refs/pull/*
       - url: https://gitlab.com/you/myrepo.git
         auth:
           type: token
@@ -104,25 +135,25 @@ daemon:
 | `token` | `env`         | Name of an env var containing the HTTPS token. Injected as `oauth2:TOKEN@` in the URL. |
 | *(none)*| —             | Leave `auth:` out entirely for public repos. |
 
-### Push strategies
+### Excluding refs
 
-Per-mirror `push_strategy` controls how refs are pushed to the target:
+Some forges create internal ref namespaces that have no meaning on other hosts — GitHub stores pull request data under `refs/pull/*`, GitLab uses `refs/merge-requests/*`. Pushing these into a mirror like Gitea will be rejected because Gitea reserves those namespaces for its own PRs.
 
-| Strategy        | Behavior |
-|----------------|----------|
-| `mirror`       | Default. `git push --mirror` — pushes all refs. Use for bare backup targets. |
-| `branches+tags`| `git push --all` + `git push --tags` — skips platform-internal refs like `refs/pull/*`. Use when mirroring to hosting platforms (Forgejo, Gitea, GitLab). |
+By default, gitgogit excludes `refs/pull/*` and `refs/merge-requests/*` from every push, so mirroring to Gitea or any other self-hosted forge works without extra configuration.
 
-### Force push
-
-Per-mirror `force: true` adds `--force` to git push commands, allowing the source to overwrite diverged refs on the mirror. This is useful when the source is the single source of truth and the mirror may have been modified independently (e.g., amended or rebased branches). Defaults to `false`.
+To override the defaults for a specific mirror, set `exclude_refs` on that mirror:
 
 ```yaml
 mirrors:
-  - url: https://forgejo.example.com/org/repo.git
-    push_strategy: branches+tags
-    force: true
+  - url: ssh://git@my-gitea-host:2222/myorg/my-project.git
+    auth:
+      type: ssh
+      key: ~/.ssh/id_ed25519
+    exclude_refs:
+      - refs/pull/*
 ```
+
+Setting `exclude_refs` replaces the defaults entirely, so list every pattern you want excluded. Branches (`refs/heads/*`), tags (`refs/tags/*`), and notes (`refs/notes/*`) are always mirrored regardless.
 
 ## CLI reference
 
@@ -234,6 +265,12 @@ gitgogit status
 # 7. Stop when done
 gitgogit stop
 ```
+
+## Known limitations / TODOs
+
+- **Per-mirror retry granularity** (`daemon.SyncRepo`): when a sync cycle produces errors across multiple mirrors, `withRetry` currently makes its retry decision based on the first error encountered and discards the rest. All mirrors are re-synced on every retry regardless of which ones actually failed. A future improvement would collect all per-mirror errors (e.g. via `errors.Join`) so that the retry context reflects the full failure set and individual mirror errors are not silently dropped.
+
+- **Windows is not currently supported.** The daemon relies on Unix-specific primitives (`Setsid`, `SIGTERM`, PID files) that have no direct Windows equivalent. A future port would require replacing the daemonization and process management layer with a Windows service implementation.
 
 ## Author
 Evan Hutchinson (ev-the-dev)

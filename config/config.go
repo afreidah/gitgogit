@@ -43,12 +43,22 @@ type SourceConfig struct {
 	Auth AuthConfig `yaml:"auth"`
 }
 
+// defaultExcludeRefs are forge-specific ref namespaces that should not be mirrored.
+var defaultExcludeRefs = []string{"refs/pull/*", "refs/merge-requests/*"}
+
 // MirrorTarget is one push destination.
 type MirrorTarget struct {
-	URL          string     `yaml:"url"`
-	Auth         AuthConfig `yaml:"auth"`
-	PushStrategy string     `yaml:"push_strategy"` // "mirror" (default), "branches+tags"
-	Force        bool       `yaml:"force"`          // add --force to push commands
+	URL         string     `yaml:"url"`
+	Auth        AuthConfig `yaml:"auth"`
+	ExcludeRefs []string   `yaml:"exclude_refs,omitempty"`
+}
+
+// EffectiveExcludeRefs returns the refs to exclude, falling back to defaults when none are configured.
+func (m MirrorTarget) EffectiveExcludeRefs() []string {
+	if len(m.ExcludeRefs) > 0 {
+		return m.ExcludeRefs
+	}
+	return defaultExcludeRefs
 }
 
 // RepoConfig is one full mirroring job.
@@ -240,12 +250,6 @@ func (c *Config) Validate() error {
 				return fmt.Errorf("repo %q: duplicate mirror URL %q", r.Name, m.URL)
 			}
 			mirrorURLs[m.URL] = true
-			switch m.PushStrategy {
-			case "", "mirror", "branches+tags":
-				// valid
-			default:
-				return fmt.Errorf("repo %q mirror %q: unknown push_strategy %q (must be \"mirror\" or \"branches+tags\")", r.Name, m.URL, m.PushStrategy)
-			}
 			if err := validateAuth(r.Name, "mirror "+m.URL, m.Auth); err != nil {
 				return err
 			}

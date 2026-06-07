@@ -92,7 +92,7 @@ func (r *Runner) Fetch(ctx context.Context) error {
 	return r.runGit(ctx, extraEnv, "-C", r.CacheDir, "fetch", "--prune", "origin")
 }
 
-// Push pushes refs to one mirror target using the configured push strategy.
+// Push pushes refs to one mirror target, excluding forge-specific namespaces.
 func (r *Runner) Push(ctx context.Context, target config.MirrorTarget) error {
 	provider, err := auth.Resolve(target.Auth)
 	if err != nil {
@@ -104,28 +104,15 @@ func (r *Runner) Push(ctx context.Context, target config.MirrorTarget) error {
 	}
 	r.Logger.Info("pushing", slog.String("repo", r.Repo.Name), slog.String("mirror", redactURL(resolvedURL)))
 
-	switch target.PushStrategy {
-	case "branches+tags":
-		allArgs := []string{"-C", r.CacheDir, "push", "--all"}
-		tagsArgs := []string{"-C", r.CacheDir, "push", "--tags"}
-		if target.Force {
-			allArgs = append(allArgs, "--force")
-			tagsArgs = append(tagsArgs, "--force")
-		}
-		allArgs = append(allArgs, resolvedURL)
-		tagsArgs = append(tagsArgs, resolvedURL)
-		if err := r.runGit(ctx, extraEnv, allArgs...); err != nil {
-			return err
-		}
-		return r.runGit(ctx, extraEnv, tagsArgs...)
-	default: // "mirror" or ""
-		args := []string{"-C", r.CacheDir, "push", "--mirror"}
-		if target.Force {
-			args = append(args, "--force")
-		}
-		args = append(args, resolvedURL)
-		return r.runGit(ctx, extraEnv, args...)
+	args := []string{"-C", r.CacheDir, "push", "--prune", resolvedURL,
+		"+refs/heads/*:refs/heads/*",
+		"+refs/tags/*:refs/tags/*",
+		"+refs/notes/*:refs/notes/*",
 	}
+	for _, pattern := range target.EffectiveExcludeRefs() {
+		args = append(args, "^"+pattern)
+	}
+	return r.runGit(ctx, extraEnv, args...)
 }
 
 // Sync clones if needed, fetches, then pushes to all configured mirrors. Returns one SyncResult per mirror target.

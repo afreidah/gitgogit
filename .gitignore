@@ -1,2 +1,7 @@
+## Binary Output
+dist/
 gitgogit
+
+## Local Testing
+config.yaml
 test-config.yaml

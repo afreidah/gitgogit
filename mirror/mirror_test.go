@@ -25,7 +25,10 @@ func initBareRepo(t *testing.T, path string) {
 	if err := os.MkdirAll(path, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	cmd := exec.Command("git", "init", "--bare", path)
+	// Use -b main so the bare repo's HEAD matches the source branch created by
+	// initRepoWithCommit; otherwise the default branch name depends on the host's
+	// init.defaultBranch and `git log` on the mirror fails when they differ.
+	cmd := exec.Command("git", "init", "--bare", "-b", "main", path)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
@@ -102,11 +105,11 @@ func TestRunner_Sync_LocalRepos(t *testing.T) {
 		t.Errorf("Sync() error: %v", results[0].Err)
 	}
 
-	// Verify the mirror has refs (push --mirror overwrites the bare repo's HEAD).
-	cmd := exec.Command("git", "-C", mirrorDir, "rev-parse", "HEAD")
+	// Verify the mirror has the commit.
+	cmd := exec.Command("git", "-C", mirrorDir, "log", "--oneline")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("git rev-parse HEAD on mirror: %v\n%s", err, out)
+		t.Fatalf("git log on mirror: %v\n%s", err, out)
 	}
 	if len(out) == 0 {
 		t.Error("mirror has no commits after sync")
@@ -177,153 +180,61 @@ func TestRunner_EnsureCloned_InvalidSource(t *testing.T) {
 	}
 }
 
-// divergeMirror clones a bare mirror, adds a divergent commit, and force-pushes
-// it back, simulating a non-fast-forward situation on the mirror.
-func divergeMirror(t *testing.T, mirrorDir string) {
-	t.Helper()
-	divergeDir := t.TempDir()
+func TestRunner_Sync_ExcludeRefs(t *testing.T) {
+	hasGit(t)
 
-	run := func(args ...string) {
-		t.Helper()
-		cmd := exec.Command("git", args...)
-		cmd.Dir = divergeDir
-		cmd.Env = append(os.Environ(),
-			"GIT_AUTHOR_NAME=Test",
-			"GIT_AUTHOR_EMAIL=test@test.com",
-			"GIT_COMMITTER_NAME=Test",
-			"GIT_COMMITTER_EMAIL=test@test.com",
-		)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
+	sourceDir := initRepoWithCommit(t)
+	mirrorDir := t.TempDir()
+	initBareRepo(t, mirrorDir)
+	cacheDir := filepath.Join(t.TempDir(), "cache.git")
+
+	// Clone source into cache, then create a fake refs/pull ref to simulate a GitHub PR ref.
+	runner := &Runner{
+		Repo: config.RepoConfig{
+			Name:    "excludetest",
+			Source:  config.SourceConfig{URL: sourceDir},
+			Mirrors: []config.MirrorTarget{{URL: mirrorDir}},
+		},
+		CacheDir: cacheDir,
+		Logger:   slog.New(slog.NewTextHandler(os.Stdout, nil)),
+	}
+	ctx := context.Background()
+	if err := runner.EnsureCloned(ctx); err != nil {
+		t.Fatalf("EnsureCloned: %v", err)
 	}
 
-	run("clone", "-b", "main", mirrorDir, divergeDir)
-	if err := os.WriteFile(filepath.Join(divergeDir, "diverge.txt"), []byte("diverge"), 0o644); err != nil {
+	// Write a fake refs/pull/1/head into the bare cache to simulate what GitHub ships.
+	refPath := filepath.Join(cacheDir, "refs", "pull", "1")
+	if err := os.MkdirAll(refPath, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	run("add", ".")
-	run("commit", "-m", "divergent commit")
-	run("push", "--force", "origin", "main")
-}
-
-func TestRunner_Sync_BranchesTagsForce(t *testing.T) {
-	hasGit(t)
-
-	sourceDir := initRepoWithCommit(t)
-	mirrorDir := t.TempDir()
-	initBareRepo(t, mirrorDir)
-	cacheDir := filepath.Join(t.TempDir(), "cache.git")
-
-	repo := config.RepoConfig{
-		Name:   "force-test",
-		Source: config.SourceConfig{URL: sourceDir},
-		Mirrors: []config.MirrorTarget{
-			{URL: mirrorDir, PushStrategy: "branches+tags", Force: true},
-		},
+	headRef := filepath.Join(cacheDir, "HEAD")
+	headData, err := os.ReadFile(headRef)
+	if err != nil {
+		t.Fatal(err)
 	}
-
-	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	runner := &Runner{Repo: repo, CacheDir: cacheDir, Logger: logger}
-	ctx := context.Background()
-
-	// Initial sync.
-	results := runner.Sync(ctx)
-	for _, r := range results {
-		if r.Err != nil {
-			t.Fatalf("initial Sync() error: %v", r.Err)
-		}
+	// Resolve HEAD to a SHA so we can write a valid ref.
+	cmd := exec.Command("git", "-C", cacheDir, "rev-parse", "HEAD")
+	sha, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("rev-parse HEAD: %v", err)
 	}
-
-	// Diverge the mirror so a normal push would fail.
-	divergeMirror(t, mirrorDir)
-
-	// Sync again — without force this would fail with non-fast-forward.
-	results = runner.Sync(ctx)
-	for _, r := range results {
-		if r.Err != nil {
-			t.Errorf("force Sync() error: %v", r.Err)
-		}
+	if err := os.WriteFile(filepath.Join(refPath, "head"), sha, 0o644); err != nil {
+		t.Fatal(err)
 	}
-}
-
-func TestRunner_Sync_BranchesTagsNoForceRejectsNonFF(t *testing.T) {
-	hasGit(t)
-
-	sourceDir := initRepoWithCommit(t)
-	mirrorDir := t.TempDir()
-	initBareRepo(t, mirrorDir)
-	cacheDir := filepath.Join(t.TempDir(), "cache.git")
-
-	repo := config.RepoConfig{
-		Name:   "noforce-test",
-		Source: config.SourceConfig{URL: sourceDir},
-		Mirrors: []config.MirrorTarget{
-			{URL: mirrorDir, PushStrategy: "branches+tags", Force: false},
-		},
-	}
-
-	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	runner := &Runner{Repo: repo, CacheDir: cacheDir, Logger: logger}
-	ctx := context.Background()
-
-	// Initial sync.
-	results := runner.Sync(ctx)
-	for _, r := range results {
-		if r.Err != nil {
-			t.Fatalf("initial Sync() error: %v", r.Err)
-		}
-	}
-
-	// Diverge the mirror so a normal push would fail.
-	divergeMirror(t, mirrorDir)
-
-	// Sync without force should fail.
-	results = runner.Sync(ctx)
-	hasErr := false
-	for _, r := range results {
-		if r.Err != nil {
-			hasErr = true
-		}
-	}
-	if !hasErr {
-		t.Error("expected non-fast-forward error without force, but sync succeeded")
-	}
-}
-
-func TestRunner_Sync_MirrorForce(t *testing.T) {
-	hasGit(t)
-
-	sourceDir := initRepoWithCommit(t)
-	mirrorDir := t.TempDir()
-	initBareRepo(t, mirrorDir)
-	cacheDir := filepath.Join(t.TempDir(), "cache.git")
-
-	repo := config.RepoConfig{
-		Name:   "mirror-force-test",
-		Source: config.SourceConfig{URL: sourceDir},
-		Mirrors: []config.MirrorTarget{
-			{URL: mirrorDir, PushStrategy: "mirror", Force: true},
-		},
-	}
-
-	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	runner := &Runner{Repo: repo, CacheDir: cacheDir, Logger: logger}
-	ctx := context.Background()
+	_ = headData
 
 	results := runner.Sync(ctx)
 	for _, r := range results {
 		if r.Err != nil {
-			t.Fatalf("Sync() with mirror+force error: %v", r.Err)
+			t.Fatalf("Sync() error: %v", r.Err)
 		}
 	}
 
-	// Second sync should also succeed.
-	results = runner.Sync(ctx)
-	for _, r := range results {
-		if r.Err != nil {
-			t.Errorf("second Sync() with mirror+force error: %v", r.Err)
-		}
+	// refs/pull/1/head must NOT exist in the mirror.
+	cmd = exec.Command("git", "-C", mirrorDir, "show-ref", "refs/pull/1/head")
+	if out, err := cmd.CombinedOutput(); err == nil {
+		t.Errorf("refs/pull/1/head was pushed to mirror but should have been excluded: %s", out)
 	}
 }
 

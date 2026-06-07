@@ -1,8 +1,17 @@
 BINARY   := gitgogit
 PREFIX   ?= /usr/local
 REGISTRY ?= $(DOCKER_REGISTRY)
-VERSION  ?= $(shell cat .version)
 IMAGE    := $(REGISTRY)/$(BINARY)
+DIST     := dist
+
+# Version derived from git tags; embedded in the binary and used for docker tags and GH releases.
+VERSION := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+
+# Strip debug info (symbol table and DWARF) and embed version
+GO_FLAGS += -ldflags="-s -w -X 'main.version=$(VERSION)'"
+
+# Avoid embedding build path in executable
+GO_FLAGS += -trimpath
 
 help: ## Display available Make targets
 	@echo ""
@@ -56,6 +65,62 @@ docker-push: docker-build ## Push Docker image to registry (requires DOCKER_REGI
 
 clean: ## Remove build artifacts
 	rm -f $(BINARY)
+	rm -rf $(DIST)
 
-.PHONY: help build install system-install system-uninstall test vet lint govulncheck docker-build docker-run docker-push clean
+  ##################
+ # Platform Build #
+##################
+
+platform-all:
+	@echo "Building all platform binaries..."
+	@mkdir -p $(DIST)
+	@$(MAKE) --no-print-directory -j4 \
+		platform-darwin-arm64 \
+		platform-darwin-amd64 \
+		platform-linux-amd64 \
+		platform-linux-arm64
+
+platform-unixlike:
+	@test -n "$(TGOOS)"   || (echo "GOOS must be set"  && false)
+	@test -n "$(TGOARCH)" || (echo "GOARCH must be set" && false)
+	CGO_ENABLED=0 GOOS="$(TGOOS)" GOARCH="$(TGOARCH)" \
+		go build $(GO_FLAGS) -o "$(DIST)/$(BINARY)-$(TGOOS)-$(TGOARCH)"
+
+platform-darwin-arm64:
+	@$(MAKE) --no-print-directory TGOOS=darwin TGOARCH=arm64 platform-unixlike
+
+platform-darwin-amd64:
+	@$(MAKE) --no-print-directory TGOOS=darwin TGOARCH=amd64 platform-unixlike
+
+platform-linux-amd64:
+	@$(MAKE) --no-print-directory TGOOS=linux TGOARCH=amd64 platform-unixlike
+
+platform-linux-arm64:
+	@$(MAKE) --no-print-directory TGOOS=linux TGOARCH=arm64 platform-unixlike
+
+  ###########
+ # Release #
+###########
+
+release: platform-all
+	@echo "Checking for gh CLI..." && gh --version > /dev/null
+	@echo "Checking for a version tag..." && \
+		git describe --tags --exact-match HEAD > /dev/null 2>&1 || \
+		(echo "HEAD is not tagged — run: git tag vX.Y.Z" && false)
+	@echo "Checking for uncommitted changes..." && \
+		test -z "`git status --porcelain`" || \
+		(echo "Cannot release with uncommitted changes:" && git status --porcelain && false)
+	@echo "Checking for main branch..." && \
+		test main = "`git rev-parse --abbrev-ref HEAD`" || \
+		(echo "Cannot release from non-main branch" && false)
+	@echo "Checking for unpushed commits..." && git fetch && \
+		test "" = "`git cherry`" || (echo "Cannot release with unpushed commits" && false)
+	@echo "Checking that tag $(VERSION) exists on remote..." && \
+		git ls-remote --tags origin "refs/tags/$(VERSION)" | grep -q "$(VERSION)" || \
+		(echo "Tag $(VERSION) has not been pushed — run: git push origin $(VERSION)" && false)
+	gh release create "$(VERSION)" $(DIST)/$(BINARY)-* \
+		--title "$(VERSION)" \
+		--generate-notes
+
+.PHONY: help build install system-install system-uninstall test vet lint govulncheck docker-build docker-run docker-push clean platform-all platform-unixlike platform-darwin-arm64 platform-darwin-amd64 platform-linux-amd64 platform-linux-arm64 release
 .DEFAULT_GOAL := help
